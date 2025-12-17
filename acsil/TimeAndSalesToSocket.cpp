@@ -2,12 +2,11 @@
 // Sends tick data over TCP socket to external applications
 
 #include "sierrachart.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
+// Link with Winsock library
 #pragma comment(lib, "ws2_32.lib")
 
-SCDLLName("Time & Sales TCP Socket Exporter")
+SCDLLName("TradeFlow TCP Socket Exporter")
 
 // Structure to hold socket state
 struct SocketState {
@@ -29,6 +28,7 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
         sc.GraphRegion = 0;
         sc.AutoLoop = 0;
         sc.UpdateAlways = 1;
+        sc.FreeDLL = 1;
         
         Input_Enabled.Name = "Enable Export";
         Input_Enabled.SetYesNo(0);
@@ -68,24 +68,28 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
     }
     
     // Try to connect if not connected
+    // Try to connect if not connected
     if (!pState->Connected)
     {
-        // Create socket
-        pState->ClientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        // Create socket only if we don't have one
         if (pState->ClientSocket == INVALID_SOCKET)
         {
-            return;
+            pState->ClientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (pState->ClientSocket == INVALID_SOCKET)
+            {
+                return;
+            }
+            
+            // Set non-blocking mode
+            u_long mode = 1;
+            ioctlsocket(pState->ClientSocket, FIONBIO, &mode);
         }
         
-        // Set non-blocking mode
-        u_long mode = 1;
-        ioctlsocket(pState->ClientSocket, FIONBIO, &mode);
-        
-        // Connect to localhost
+        // Only connect if socket is valid and not connected
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_port = htons(Input_Port.GetInt());
-        inet_pton(AF_INET, "127.0.0.1", &serverAddr.sin_addr);
+        serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
         
         int connectResult = connect(pState->ClientSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
         

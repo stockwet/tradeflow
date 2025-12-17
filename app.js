@@ -21,26 +21,44 @@ class TradeFlowApp {
     }
     
     initializeUI() {
+        // Enable audio on first click
+        document.addEventListener('click', () => {
+            if (!this.audioEngine.isInitialized) {
+                this.audioEngine.init();
+                console.log('✓ Audio enabled');
+            }
+        }, { once: true });
+        
         // Master volume control
         const volumeSlider = document.getElementById('master-volume');
         const volumeValue = document.getElementById('volume-value');
         
         volumeSlider.addEventListener('input', (e) => {
             const volume = parseInt(e.target.value) / 100;
-            this.audioEngine.setMasterVolume(volume);
+            this.audioEngine.setVolume(volume);
             volumeValue.textContent = e.target.value + '%';
         });
         
         // Frequency control
-        const freqSlider = document.getElementById('frequency');
-        const freqValue = document.getElementById('frequency-value');
-        
-        freqSlider.addEventListener('input', (e) => {
+        // BID frequency control
+        const bidFreqSlider = document.getElementById('bid-frequency');
+        const bidFreqValue = document.getElementById('bid-freq-value');
+
+        bidFreqSlider.addEventListener('input', (e) => {
             const freq = parseInt(e.target.value);
-            this.audioEngine.setFrequency(freq);
-            freqValue.textContent = freq + ' Hz';
+            this.audioEngine.setBidFrequency(freq);
+            bidFreqValue.textContent = freq + ' Hz';
         });
-        
+
+        // ASK frequency control
+        const askFreqSlider = document.getElementById('ask-frequency');
+        const askFreqValue = document.getElementById('ask-freq-value');
+
+        askFreqSlider.addEventListener('input', (e) => {
+            const freq = parseInt(e.target.value);
+            this.audioEngine.setAskFrequency(freq);
+            askFreqValue.textContent = freq + ' Hz';
+        });
         // Sensitivity control
         const sensitivitySlider = document.getElementById('sensitivity');
         const sensitivityValue = document.getElementById('sensitivity-value');
@@ -77,7 +95,11 @@ class TradeFlowApp {
             this.dataPlayer.setPlaybackSpeed(speed);
             speedValue.textContent = speed.toFixed(1) + 'x';
         });
-        
+        // Reset stats button
+        document.getElementById('reset-stats-btn').addEventListener('click', () => {
+            this.resetStats();
+            this.updateStatsDisplay(); // Immediately update display to show zeros
+        });
         // WebSocket reconnect button
         document.getElementById('reconnect-btn').addEventListener('click', () => {
             this.connectWebSocket();
@@ -100,7 +122,7 @@ class TradeFlowApp {
     }
     
     connectWebSocket() {
-        // Connect to DTC client running in Windows VM
+        // Connect to socket reader running in Windows VM
         const WS_URL = 'ws://10.211.55.5:8080';  // Change this to your Windows VM IP
         const statusEl = document.getElementById('connection-status');
         const reconnectBtn = document.getElementById('reconnect-btn');
@@ -113,7 +135,9 @@ class TradeFlowApp {
             this.websocket = new WebSocket(WS_URL);
             
             this.websocket.onopen = () => {
-                console.log('✓ Connected to DTC client WebSocket');
+                console.log('✓ Connected to socket reader WebSocket');
+                // Initialize audio when connection opens
+                this.audioEngine.init();
                 this.connectionStatus = 'connected';
                 statusEl.textContent = 'Connected';
                 statusEl.className = 'status connected';
@@ -137,7 +161,7 @@ class TradeFlowApp {
             };
             
             this.websocket.onclose = () => {
-                console.log('✗ Disconnected from DTC client');
+                console.log('✗ Disconnected from socket reader');
                 this.connectionStatus = 'disconnected';
                 statusEl.textContent = 'Disconnected';
                 statusEl.className = 'status disconnected';

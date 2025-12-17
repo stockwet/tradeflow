@@ -7,8 +7,9 @@ class AudioEngine {
     constructor() {
         this.audioCtx = null;
         this.masterGain = null;
-        this.frequency = 3380;  // Default frequency like TickStrike
-        this.volume = 0.3;      // Master volume
+        this.bidFrequency = 100;   // Lower pitch for BID/SELL
+        this.askFrequency = 1000;   // Higher pitch for ASK/BUY
+        this.volume = 0.8;          // Master volume
         this.isInitialized = false;
     }
 
@@ -44,15 +45,14 @@ class AudioEngine {
         const gainNode = this.audioCtx.createGain();
         const panner = this.audioCtx.createStereoPanner();
 
-        // Set frequency
-        oscillator.frequency.value = this.frequency;
+        // Set frequency based on side
+        oscillator.frequency.value = side === 'BID' ? this.bidFrequency : this.askFrequency;
 
         // Set stereo position
         // -1.0 = full left (SELL/BID), +1.0 = full right (BUY/ASK)
         panner.pan.value = side === 'BID' ? -1.0 : 1.0;
 
         // Calculate gain based on volume (normalize to reasonable range)
-        // Larger trades = louder, but cap at reasonable level
         const normalizedGain = Math.min(volume / 1000, 1.0) * this.volume;
         gainNode.gain.value = normalizedGain;
 
@@ -64,8 +64,7 @@ class AudioEngine {
         // Play the tone
         const now = this.audioCtx.currentTime;
         
-        // Add slight envelope for smoother sound (optional)
-        // Attack: 5ms, Release: 10ms
+        // Add slight envelope for smoother sound
         gainNode.gain.setValueAtTime(0, now);
         gainNode.gain.linearRampToValueAtTime(normalizedGain, now + 0.005);
         gainNode.gain.setValueAtTime(normalizedGain, now + duration - 0.01);
@@ -82,23 +81,6 @@ class AudioEngine {
     }
 
     /**
-     * Play rapid-fire clicks (for high-frequency trading activity)
-     * This creates the "stacking" effect you mentioned
-     * @param {string} side - 'BID' or 'ASK'
-     * @param {Array} volumes - Array of trade volumes
-     * @param {number} interval - Time between clicks in seconds
-     */
-    playRapidFire(side, volumes, interval = 0.05) {
-        if (!this.isInitialized) return;
-
-        volumes.forEach((volume, index) => {
-            setTimeout(() => {
-                this.playTrade(side, volume, 0.05);  // Shorter duration for rapid fire
-            }, index * interval * 1000);
-        });
-    }
-
-    /**
      * Update master volume
      * @param {number} volume - Volume level (0-1)
      */
@@ -110,11 +92,19 @@ class AudioEngine {
     }
 
     /**
-     * Update tone frequency
+     * Update BID frequency
      * @param {number} freq - Frequency in Hz
      */
-    setFrequency(freq) {
-        this.frequency = freq;
+    setBidFrequency(freq) {
+        this.bidFrequency = freq;
+    }
+
+    /**
+     * Update ASK frequency
+     * @param {number} freq - Frequency in Hz
+     */
+    setAskFrequency(freq) {
+        this.askFrequency = freq;
     }
 
     /**
