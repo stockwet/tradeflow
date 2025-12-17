@@ -3,10 +3,17 @@
 
 const net = require('net');
 const WebSocket = require('ws');
+const fs = require('fs');
 
 const CONFIG = {
     TCP_PORT: 9999,
     WS_PORT: 8080
+};
+
+const RECORDING_CONFIG = {
+    ENABLED: false,  // Set to true to record
+    MAX_TRADES: 1000, // Stop after this many
+    FILENAME: 'tradeflow_sample.csv'
 };
 
 class SocketTickReader {
@@ -18,6 +25,7 @@ class SocketTickReader {
         this.tickCount = 0;
         this.lastSequence = 0;
         this.buffer = '';
+        this.recordedTrades = [];
     }
     
     // Start WebSocket server for Electron app
@@ -100,9 +108,18 @@ class SocketTickReader {
             try {
                 const tick = JSON.parse(line);
                 
-                // Log first few ticks
-                if (this.tickCount < 5) {
-                    console.log(`✓ Tick ${this.tickCount + 1}:`, JSON.stringify(tick));
+                // Log first 10 ticks with full structure
+                if (this.tickCount < 50) {
+                    console.log(`\n✓ Tick ${this.tickCount + 1} (full data):`);
+                    console.log(JSON.stringify(tick, null, 2));
+                }
+                
+                // Record to CSV if enabled
+                if (RECORDING_CONFIG.ENABLED && this.recordedTrades.length < RECORDING_CONFIG.MAX_TRADES) {
+                    this.recordedTrades.push(tick);
+                    if (this.recordedTrades.length === RECORDING_CONFIG.MAX_TRADES) {
+                        this.saveRecording();
+                    }
                 }
                 
                 // Check sequence
@@ -128,11 +145,28 @@ class SocketTickReader {
         }
     }
     
+    // Save recorded trades to CSV
+    saveRecording() {
+        const csv = 'seq,timestamp,price,volume,side,symbol\n' + 
+            this.recordedTrades.map(t => 
+                `${t.seq},${t.ts},${t.p},${t.v},${t.s},${t.sym}`
+            ).join('\n');
+        
+        fs.writeFileSync(RECORDING_CONFIG.FILENAME, csv);
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`✓ RECORDING COMPLETE`);
+        console.log(`  Saved ${this.recordedTrades.length} trades to ${RECORDING_CONFIG.FILENAME}`);
+        console.log(`${'='.repeat(60)}\n`);
+    }
+    
     start() {
         console.log('='.repeat(60));
         console.log('SIERRA CHART TICK READER (TCP Socket)');
         console.log('TCP Port:', CONFIG.TCP_PORT);
         console.log('WebSocket Port:', CONFIG.WS_PORT);
+        if (RECORDING_CONFIG.ENABLED) {
+            console.log(`📹 RECORDING ENABLED (${RECORDING_CONFIG.MAX_TRADES} trades max)`);
+        }
         console.log('='.repeat(60) + '\n');
         
         this.startWebSocketServer();
@@ -140,6 +174,11 @@ class SocketTickReader {
     }
     
     stop() {
+        // Save any partial recording
+        if (RECORDING_CONFIG.ENABLED && this.recordedTrades.length > 0) {
+            this.saveRecording();
+        }
+        
         if (this.sierraChartSocket) {
             this.sierraChartSocket.end();
         }
