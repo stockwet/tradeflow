@@ -1,0 +1,8 @@
+orderflow-audio/
+├── package.json
+├── index.html          # Main UI
+├── app.js             # Application logic
+├── audio-engine.js    # Audio synthesis
+├── vu-meter.js        # VU meter visualization
+├── data-player.js     # Playback sample data
+└── sample-data.csv    # Your exported data

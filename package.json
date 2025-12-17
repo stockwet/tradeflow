@@ -1,0 +1,24 @@
+{
+  "name": "orderflow-audio",
+  "version": "1.0.0",
+  "description": "Order Flow Audio Visualization - TickStrike Style",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging"
+  },
+  "keywords": [
+    "trading",
+    "orderflow",
+    "audio",
+    "visualization"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
