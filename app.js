@@ -13,14 +13,11 @@ class TradeFlowApp {
         this.dataMode = 'websocket';  // 'websocket' or 'playback'
 
         // Audio alert mode
-        // 'raw' plays every tick (current behavior)
+        // 'raw' plays every tick
         // 'intelligent' only plays when EventEngine emits a flow event
-        // this.audioAlertMode = 'raw';
         this.audioAlertMode = 'intelligent';
 
-
-        // Event Engine (optional, but recommended)
-        // Requires event-engine.js to be loaded before app.js in index.html
+        // Event Engine
         this.eventEngine = null;
         this.initializeEventEngine();
 
@@ -38,33 +35,66 @@ class TradeFlowApp {
         this.connectWebSocket();
     }
 
+    // -----------------------------
+    // Defaults + persistence
+    // -----------------------------
+    getDefaultEngineConfig() {
+        return {
+            windowMs: 300,
+            dominanceMetric: 'volume',
+            enterDominance: 0.80,
+            exitDominance: 0.65,
+            minTradesPerSec: 35,
+            maxEventsPerSec: 8,
+            requireSustainedMs: 80,
+            lockSideMs: 150,
+            cooldownMs: 0
+        };
+    }
+
+    loadSettings() {
+        try {
+            const raw = localStorage.getItem('tradeflow_settings');
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    }
+
+    saveSettings(settings) {
+        localStorage.setItem('tradeflow_settings', JSON.stringify(settings));
+    }
+
+    // -----------------------------
+    // Event engine init
+    // -----------------------------
     initializeEventEngine() {
         if (typeof EventEngine === 'undefined') {
             console.warn('EventEngine not found. Ensure event-engine.js is loaded before app.js.');
             return;
         }
 
-        // Baseline defaults; you’ll likely tune these per instrument.
-        this.eventEngine = new EventEngine({
-            windowMs: 300,
-            dominanceMetric: 'volume',
+        const saved = this.loadSettings();
+        const defaults = this.getDefaultEngineConfig();
 
-            enterDominance: 0.80,
-            exitDominance: 0.65,
-
-            minTradesPerSec: 35,
-
-            maxEventsPerSec: 8,
-
-            requireSustainedMs: 80,
-            lockSideMs: 150,
-
-            cooldownMs: 0,
+        const engineConfig = {
+            ...defaults,
+            ...(saved?.engineConfig || {}),
+            minTotalVolumeInWindow: 0,
             debug: false
-        });
+        };
 
+        this.eventEngine = new EventEngine(engineConfig);
+
+        if (saved?.audioAlertMode) {
+            this.audioAlertMode = saved.audioAlertMode;
+        }
     }
 
+    // -----------------------------
+    // UI init
+    // -----------------------------
     initializeUI() {
         // Enable audio on first click (autoplay policy)
         document.addEventListener('click', () => {
@@ -78,105 +108,276 @@ class TradeFlowApp {
         const volumeSlider = document.getElementById('master-volume');
         const volumeValue = document.getElementById('volume-value');
 
-        volumeSlider.addEventListener('input', (e) => {
-            const volume = parseInt(e.target.value, 10) / 100;
-            this.audioEngine.setVolume(volume);
-            volumeValue.textContent = e.target.value + '%';
-        });
+        if (volumeSlider && volumeValue) {
+            volumeSlider.addEventListener('input', (e) => {
+                const pct = parseInt(e.target.value, 10);    // 0..200
+                const x = pct / 100;                         // 0..2
+                const curved = Math.pow(x, 1.6);             // perceptual curve
+                this.audioEngine.setVolume(curved);
+                volumeValue.textContent = e.target.value + '%';
+            });
+        }
 
         // BID frequency control
         const bidFreqSlider = document.getElementById('bid-frequency');
         const bidFreqValue = document.getElementById('bid-freq-value');
 
-        bidFreqSlider.addEventListener('input', (e) => {
-            const freq = parseInt(e.target.value, 10);
-            this.audioEngine.setBidFrequency(freq);
-            bidFreqValue.textContent = freq + ' Hz';
-        });
+        if (bidFreqSlider && bidFreqValue) {
+            bidFreqSlider.addEventListener('input', (e) => {
+                const freq = parseInt(e.target.value, 10);
+                this.audioEngine.setBidFrequency(freq);
+                bidFreqValue.textContent = freq + ' Hz';
+            });
+        }
 
         // ASK frequency control
         const askFreqSlider = document.getElementById('ask-frequency');
         const askFreqValue = document.getElementById('ask-freq-value');
 
-        askFreqSlider.addEventListener('input', (e) => {
-            const freq = parseInt(e.target.value, 10);
-            this.audioEngine.setAskFrequency(freq);
-            askFreqValue.textContent = freq + ' Hz';
-        });
+        if (askFreqSlider && askFreqValue) {
+            askFreqSlider.addEventListener('input', (e) => {
+                const freq = parseInt(e.target.value, 10);
+                this.audioEngine.setAskFrequency(freq);
+                askFreqValue.textContent = freq + ' Hz';
+            });
+        }
 
         // Sensitivity control
         const sensitivitySlider = document.getElementById('sensitivity');
         const sensitivityValue = document.getElementById('sensitivity-value');
 
-        sensitivitySlider.addEventListener('input', (e) => {
-            const sensitivity = parseInt(e.target.value, 10) / 100;
-            this.vuMeter.setSensitivity(sensitivity);
-            sensitivityValue.textContent = e.target.value + '%';
-        });
+        if (sensitivitySlider && sensitivityValue) {
+            sensitivitySlider.addEventListener('input', (e) => {
+                const sensitivity = parseInt(e.target.value, 10) / 100;
+                this.vuMeter.setSensitivity(sensitivity);
+                sensitivityValue.textContent = e.target.value + '%';
+            });
+        }
 
         // Data mode toggle (Live / Playback)
         const modeToggle = document.getElementById('data-mode');
-        modeToggle.addEventListener('change', (e) => {
-            this.dataMode = e.target.value;
-            this.updateUIForMode();
-        });
+        if (modeToggle) {
+            modeToggle.addEventListener('change', (e) => {
+                this.dataMode = e.target.value;
+                this.updateUIForMode();
+            });
+        }
 
         // Playback controls
-        document.getElementById('play-btn').addEventListener('click', () => this.handlePlay());
-        document.getElementById('pause-btn').addEventListener('click', () => this.handlePause());
-        document.getElementById('stop-btn').addEventListener('click', () => this.handleStop());
+        const playBtn = document.getElementById('play-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const stopBtn = document.getElementById('stop-btn');
+
+        if (playBtn) playBtn.addEventListener('click', () => this.handlePlay());
+        if (pauseBtn) pauseBtn.addEventListener('click', () => this.handlePause());
+        if (stopBtn) stopBtn.addEventListener('click', () => this.handleStop());
 
         // File upload
-        document.getElementById('csv-file').addEventListener('change', (e) => {
-            this.handleFileUpload(e.target.files[0]);
-        });
+        const csvInput = document.getElementById('csv-file');
+        if (csvInput) {
+            csvInput.addEventListener('change', (e) => {
+                this.handleFileUpload(e.target.files[0]);
+            });
+        }
 
         // Speed control
         const speedSlider = document.getElementById('playback-speed');
         const speedValue = document.getElementById('speed-value');
 
-        speedSlider.addEventListener('input', (e) => {
-            const speed = parseFloat(e.target.value);
-            this.dataPlayer.setPlaybackSpeed(speed);
-            speedValue.textContent = speed.toFixed(1) + 'x';
-        });
+        if (speedSlider && speedValue) {
+            speedSlider.addEventListener('input', (e) => {
+                const speed = parseFloat(e.target.value);
+                this.dataPlayer.setPlaybackSpeed(speed);
+                speedValue.textContent = speed.toFixed(1) + 'x';
+            });
+        }
 
         // Reset stats button
-        document.getElementById('reset-stats-btn').addEventListener('click', () => {
-            this.resetStats();
-            this.updateStatsDisplay();
-        });
+        const resetBtn = document.getElementById('reset-stats-btn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                this.resetStats();
+                this.updateStatsDisplay();
+            });
+        }
 
         // WebSocket reconnect button
-        document.getElementById('reconnect-btn').addEventListener('click', () => {
-            this.connectWebSocket();
-        });
+        const reconnectBtn = document.getElementById('reconnect-btn');
+        if (reconnectBtn) {
+            reconnectBtn.addEventListener('click', () => {
+                this.connectWebSocket();
+            });
+        }
 
         this.updateUIForMode();
+
+        // Settings drawer wiring
+        this.initializeSettingsDrawer();
+        this.populateSettingsUIFromCurrent();
     }
 
     updateUIForMode() {
         const playbackControls = document.getElementById('playback-controls');
         const websocketStatus = document.getElementById('websocket-status');
 
+        if (!playbackControls || !websocketStatus) return;
+
         if (this.dataMode === 'websocket') {
             playbackControls.style.display = 'none';
-            websocketStatus.style.display = 'block';
+            websocketStatus.style.display = 'flex';
         } else {
             playbackControls.style.display = 'block';
             websocketStatus.style.display = 'none';
         }
     }
 
+    // -----------------------------
+    // Settings drawer methods
+    // -----------------------------
+    initializeSettingsDrawer() {
+        const openBtn = document.getElementById('open-settings-btn');
+        const closeBtn = document.getElementById('close-settings-btn');
+        const overlay = document.getElementById('settings-overlay');
+        const drawer = document.getElementById('settings-drawer');
+
+        const applyBtn = document.getElementById('apply-settings-btn');
+        const resetBtn = document.getElementById('reset-settings-btn');
+
+        if (!overlay || !drawer) return;
+
+        const open = () => {
+            overlay.style.display = 'block';
+            drawer.classList.add('open');
+            drawer.setAttribute('aria-hidden', 'false');
+            this.populateSettingsUIFromCurrent();
+        };
+
+        const close = () => {
+            overlay.style.display = 'none';
+            drawer.classList.remove('open');
+            drawer.setAttribute('aria-hidden', 'true');
+        };
+
+        if (openBtn) openBtn.addEventListener('click', open);
+        if (closeBtn) closeBtn.addEventListener('click', close);
+        overlay.addEventListener('click', close);
+
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                this.applySettingsFromUI();
+                close();
+            });
+        }
+
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                this.resetSettingsToDefaults();
+                this.populateSettingsUIFromCurrent();
+            });
+        }
+    }
+
+    populateSettingsUIFromCurrent() {
+        const modeSelect = document.getElementById('audio-alert-mode');
+        if (modeSelect) modeSelect.value = this.audioAlertMode || 'raw';
+
+        const cfg = (this.eventEngine && this.eventEngine.getState)
+            ? this.eventEngine.getState().config
+            : this.getDefaultEngineConfig();
+
+        const setVal = (id, value) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.value = value;
+        };
+
+        setVal('engine-windowMs', cfg.windowMs);
+        setVal('engine-dominanceMetric', cfg.dominanceMetric);
+        setVal('engine-enterDominance', cfg.enterDominance);
+        setVal('engine-exitDominance', cfg.exitDominance);
+        setVal('engine-minTradesPerSec', cfg.minTradesPerSec);
+        setVal('engine-maxEventsPerSec', cfg.maxEventsPerSec);
+        setVal('engine-requireSustainedMs', cfg.requireSustainedMs);
+        setVal('engine-lockSideMs', cfg.lockSideMs);
+        setVal('engine-cooldownMs', cfg.cooldownMs);
+    }
+
+    applySettingsFromUI() {
+        const modeSelect = document.getElementById('audio-alert-mode');
+        const newMode = modeSelect ? modeSelect.value : 'raw';
+        this.audioAlertMode = newMode;
+
+        const readNum = (id) => {
+            const el = document.getElementById(id);
+            if (!el) return null;
+            const v = Number(el.value);
+            return Number.isFinite(v) ? v : null;
+        };
+
+        const readStr = (id) => {
+            const el = document.getElementById(id);
+            return el ? String(el.value) : null;
+        };
+
+        const engineConfig = {
+            windowMs: readNum('engine-windowMs'),
+            dominanceMetric: readStr('engine-dominanceMetric'),
+            enterDominance: readNum('engine-enterDominance'),
+            exitDominance: readNum('engine-exitDominance'),
+            minTradesPerSec: readNum('engine-minTradesPerSec'),
+            maxEventsPerSec: readNum('engine-maxEventsPerSec'),
+            requireSustainedMs: readNum('engine-requireSustainedMs'),
+            lockSideMs: readNum('engine-lockSideMs'),
+            cooldownMs: readNum('engine-cooldownMs')
+        };
+
+        Object.keys(engineConfig).forEach(k => {
+            if (engineConfig[k] === null || engineConfig[k] === '') delete engineConfig[k];
+        });
+
+        if (this.eventEngine && this.eventEngine.updateConfig) {
+            this.eventEngine.updateConfig(engineConfig);
+            this.eventEngine.reset();
+        }
+
+        this.saveSettings({
+            audioAlertMode: this.audioAlertMode,
+            engineConfig: (this.eventEngine && this.eventEngine.getState)
+                ? this.eventEngine.getState().config
+                : engineConfig
+        });
+
+        console.log('Settings applied:', { audioAlertMode: this.audioAlertMode, engineConfig });
+    }
+
+    resetSettingsToDefaults() {
+        const defaults = this.getDefaultEngineConfig();
+        this.audioAlertMode = 'raw';
+
+        if (this.eventEngine && this.eventEngine.updateConfig) {
+            this.eventEngine.updateConfig(defaults);
+            this.eventEngine.reset();
+        }
+
+        this.saveSettings({
+            audioAlertMode: this.audioAlertMode,
+            engineConfig: defaults
+        });
+    }
+
+    // -----------------------------
+    // WebSocket
+    // -----------------------------
     connectWebSocket() {
-        // Connect to socket reader running in Windows VM
-        const WS_URL = 'ws://10.211.55.5:8080';  // Change this to your Windows VM IP
+        const WS_URL = 'ws://10.211.55.5:8080';
         const statusEl = document.getElementById('connection-status');
         const reconnectBtn = document.getElementById('reconnect-btn');
 
-        statusEl.textContent = 'Connecting...';
-        statusEl.className = 'status connecting';
-        reconnectBtn.disabled = true;
+        if (statusEl) {
+            statusEl.textContent = 'Connecting...';
+            statusEl.className = 'status connecting';
+        }
+        if (reconnectBtn) reconnectBtn.disabled = true;
 
         try {
             this.websocket = new WebSocket(WS_URL);
@@ -184,14 +385,15 @@ class TradeFlowApp {
             this.websocket.onopen = () => {
                 console.log('Connected to socket reader WebSocket');
 
-                // Initialize audio when connection opens (note: may still require user gesture in some environments)
-                // Leaving this in because it’s in your current file; if you see autoplay issues, we can remove it.
+                // Note: user gesture listener above is the real guarantee.
                 this.audioEngine.init();
 
                 this.connectionStatus = 'connected';
-                statusEl.textContent = 'Connected';
-                statusEl.className = 'status connected';
-                reconnectBtn.disabled = true;
+                if (statusEl) {
+                    statusEl.textContent = 'Connected';
+                    statusEl.className = 'status connected';
+                }
+                if (reconnectBtn) reconnectBtn.disabled = true;
 
                 this.resetStats();
             };
@@ -215,11 +417,12 @@ class TradeFlowApp {
                 console.log('Disconnected from socket reader');
 
                 this.connectionStatus = 'disconnected';
-                statusEl.textContent = 'Disconnected';
-                statusEl.className = 'status disconnected';
-                reconnectBtn.disabled = false;
+                if (statusEl) {
+                    statusEl.textContent = 'Disconnected';
+                    statusEl.className = 'status disconnected';
+                }
+                if (reconnectBtn) reconnectBtn.disabled = false;
 
-                // Try to reconnect after 5 seconds
                 setTimeout(() => {
                     if (this.connectionStatus === 'disconnected' && this.dataMode === 'websocket') {
                         console.log('Attempting to reconnect...');
@@ -230,45 +433,37 @@ class TradeFlowApp {
 
         } catch (err) {
             console.error('Failed to create WebSocket:', err);
-            statusEl.textContent = 'Error';
-            statusEl.className = 'status disconnected';
-            reconnectBtn.disabled = false;
+            if (statusEl) {
+                statusEl.textContent = 'Error';
+                statusEl.className = 'status disconnected';
+            }
+            if (reconnectBtn) reconnectBtn.disabled = false;
         }
     }
 
-    // Unified trade processing for both Live and Playback
+    // -----------------------------
+    // Trade processing
+    // -----------------------------
     processTrade(trade) {
-        // Normalize (defensive)
         const side = trade.side;
         const volume = Number(trade.volume);
 
         if (side !== 'BID' && side !== 'ASK') return;
         if (!Number.isFinite(volume)) return;
 
-        // Always update visuals/stats from raw trades (you can change this later if you want visuals to reflect events)
         this.vuMeter.updateVolume(side, volume);
         this.updateStats(side, volume);
 
-        // Audio output
         if (this.audioAlertMode === 'raw' || !this.eventEngine) {
-            // Raw tick audio
             this.audioEngine.playTrade(side, volume);
             return;
         }
 
-        // Intelligent mode: ingest tick → maybe emit event
         const event = this.eventEngine.ingest(trade);
         if (!event) return;
 
-        // Minimal mapping for v1:
-        // Strength is 0..1, convert into a small pseudo-volume so clicks reflect dominance.
         const pseudoVolume = Math.max(1, Math.round(event.strength * 10));
-
-        // Play dominant-side click
         this.audioEngine.playTrade(event.side, pseudoVolume);
-
-        // Optional: you can also drive the meter differently here if you want event-only visualization later.
-        // For now, visuals remain tick-accurate.
     }
 
     handleTrade(trade) {
@@ -282,11 +477,9 @@ class TradeFlowApp {
             return;
         }
 
-        // Reset before playback starts
         this.resetStats();
 
         this.dataPlayer.play((trade) => {
-            // Playback trades should match: { timestamp, price, volume, side, symbol }
             this.processTrade(trade);
         });
     }
@@ -312,6 +505,9 @@ class TradeFlowApp {
         reader.readAsText(file);
     }
 
+    // -----------------------------
+    // Stats
+    // -----------------------------
     updateStats(side, volume) {
         if (!this.stats.startTime) {
             this.stats.startTime = Date.now();
@@ -343,22 +539,48 @@ class TradeFlowApp {
     startStatsUpdate() {
         setInterval(() => {
             this.updateStatsDisplay();
-        }, 100);  // Update 10 times per second
+        }, 100);
     }
 
     updateStatsDisplay() {
-        document.getElementById('sell-count').textContent = this.stats.sellCount;
-        document.getElementById('buy-count').textContent = this.stats.buyCount;
-        document.getElementById('sell-volume').textContent = this.stats.sellVolume;
-        document.getElementById('buy-volume').textContent = this.stats.buyVolume;
+        const setText = (id, value) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = value;
+        };
 
-        // Calculate events per second (raw trade rate)
-        if (this.stats.startTime) {
-            const elapsed = (Date.now() - this.stats.startTime) / 1000;
-            const totalEvents = this.stats.sellCount + this.stats.buyCount;
-            const eventsPerSec = elapsed > 0 ? (totalEvents / elapsed).toFixed(1) : '0.0';
-            document.getElementById('events-per-sec').textContent = eventsPerSec;
+        setText('sell-count', this.stats.sellCount);
+        setText('buy-count', this.stats.buyCount);
+        setText('sell-volume', this.stats.sellVolume);
+        setText('buy-volume', this.stats.buyVolume);
+
+        if (!this.stats.startTime) return;
+
+        const elapsed = (Date.now() - this.stats.startTime) / 1000;
+        if (elapsed <= 0) {
+            setText('sell-trades-per-sec', '0.0');
+            setText('buy-trades-per-sec', '0.0');
+            setText('sell-vol-per-sec', '0.0');
+            setText('buy-vol-per-sec', '0.0');
+            setText('events-per-sec', '0.0');
+            return;
         }
+
+        // Per-side rates
+        const sellTradesPerSec = this.stats.sellCount / elapsed;
+        const buyTradesPerSec = this.stats.buyCount / elapsed;
+        const sellVolPerSec = this.stats.sellVolume / elapsed;
+        const buyVolPerSec = this.stats.buyVolume / elapsed;
+
+        setText('sell-trades-per-sec', sellTradesPerSec.toFixed(1));
+        setText('buy-trades-per-sec', buyTradesPerSec.toFixed(1));
+        setText('sell-vol-per-sec', sellVolPerSec.toFixed(1));
+        setText('buy-vol-per-sec', buyVolPerSec.toFixed(1));
+
+        // Total events/sec (kept for compatibility; you said you may hide this)
+        const totalEvents = this.stats.sellCount + this.stats.buyCount;
+        const eventsPerSec = totalEvents / elapsed;
+        setText('events-per-sec', eventsPerSec.toFixed(1));
     }
 }
 

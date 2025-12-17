@@ -53,7 +53,23 @@ class AudioEngine {
         panner.pan.value = side === 'BID' ? -1.0 : 1.0;
 
         // Calculate gain based on volume (normalize to reasonable range)
-        const normalizedGain = Math.min(volume / 1000, 1.0) * this.volume;
+        // const normalizedGain = Math.min(volume / 1000, 1.0) * this.volume
+        // Convert trade volume -> audible gain with a floor + curve
+        // - floor keeps tiny prints audible
+        // - curve prevents huge prints from being painfully loud
+        const v = Math.max(0, Number(volume) || 0);
+
+        // Tune these:
+        const floor = 0.02;          // baseline loudness for any trade
+        const scale = 0.25;          // overall sensitivity of size->loudness
+        const k = 35;                // volume where it starts feeling "strong"
+
+        // Smooth saturating curve in [0..1)
+        const shaped = 1 - Math.exp(-v / k);
+
+        // Final gain
+        const normalizedGain = Math.min(floor + shaped * scale, 1.0) * this.volume;
+
         gainNode.gain.value = normalizedGain;
 
         // Connect audio graph
@@ -85,7 +101,7 @@ class AudioEngine {
      * @param {number} volume - Volume level (0-1)
      */
     setVolume(volume) {
-        this.volume = Math.max(0, Math.min(1, volume));
+        this.volume = Math.max(0, Math.min(2, volume));
         if (this.masterGain) {
             this.masterGain.gain.value = this.volume;
         }
