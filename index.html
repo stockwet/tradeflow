@@ -9,7 +9,7 @@
   <body>
     <div class="container">
       <header>
-        <h1>TradeFlow Audio Monitor</h1>
+        <h1>🎵 TradeFlow Audio Monitor</h1>
         <p class="subtitle">Real-time order flow sonification</p>
       </header>
 
@@ -170,6 +170,11 @@
         <!-- Audio Settings (always visible) -->
         <div class="drawer-section">
           <h4>Audio Settings</h4>
+
+          <div class="drawer-row">
+            <label for="aggregate-orders">Aggregate Orders</label>
+            <input type="checkbox" id="aggregate-orders">
+          </div>
 
           <div class="control-group">
             <label for="master-volume">
@@ -469,11 +474,11 @@
       </div>
     </aside>
 
-    <script src="audio-engine.js"></script>
-    <script src="vu-meter.js"></script>
-    <script src="data-player.js"></script>
-    <script src="event-engine.js"></script>
-    <script src="transition-detection-engine.js"></script>
+    <script src="components/audio-engine.js"></script>
+    <script src="components/vu-meter.js"></script>
+    <script src="components/data-player.js"></script>
+    <script src="components/event-engine.js"></script>
+    <script src="components/transition-detection-engine.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

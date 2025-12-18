@@ -461,6 +461,13 @@ input[type="range"]::-moz-range-thumb {
   font-size: 0.9em;
 }
 
+.drawer-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #00ff88;
+}
+
 .drawer-footer {
   padding: 20px;
   border-top: 1px solid #333;

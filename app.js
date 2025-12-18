@@ -15,6 +15,11 @@ class TradeFlowApp {
         // Audio alert mode: 'raw', 'intelligent', or 'transition'
         this.audioAlertMode = 'intelligent';
 
+        // Order aggregation
+        this.aggregateOrders = false;      // Toggle to combine same-timestamp orders
+        this.aggregationBuffer = new Map(); // timestamp+side -> accumulated volume
+        this.aggregationTimeout = null;
+
         // Engines
         this.eventEngine = null;           // Intelligent mode (continuous flow)
         this.transitionEngine = null;      // Transition detection mode
@@ -124,6 +129,9 @@ class TradeFlowApp {
         if (saved?.audioAlertMode) {
             this.audioAlertMode = saved.audioAlertMode;
         }
+        if (saved?.aggregateOrders !== undefined) {
+            this.aggregateOrders = saved.aggregateOrders;
+        }
     }
 
     // -----------------------------
@@ -147,9 +155,26 @@ class TradeFlowApp {
                 this.updateSettingsSectionsVisibility();
                 this.saveSettings({
                     audioAlertMode: this.audioAlertMode,
+                    aggregateOrders: this.aggregateOrders,
                     eventEngineConfig: this.eventEngine?.config || this.getDefaultEventEngineConfig(),
                     transitionEngineConfig: this.transitionEngine?.config || this.getDefaultTransitionEngineConfig()
                 });
+            });
+        }
+
+        // Aggregate orders toggle
+        const aggregateCheckbox = document.getElementById('aggregate-orders');
+        if (aggregateCheckbox) {
+            aggregateCheckbox.checked = this.aggregateOrders;
+            aggregateCheckbox.addEventListener('change', (e) => {
+                this.aggregateOrders = e.target.checked;
+                this.saveSettings({
+                    audioAlertMode: this.audioAlertMode,
+                    aggregateOrders: this.aggregateOrders,
+                    eventEngineConfig: this.eventEngine?.config || this.getDefaultEventEngineConfig(),
+                    transitionEngineConfig: this.transitionEngine?.config || this.getDefaultTransitionEngineConfig()
+                });
+                console.log('Order aggregation:', this.aggregateOrders ? 'enabled' : 'disabled');
             });
         }
 
@@ -550,11 +575,46 @@ class TradeFlowApp {
     // -----------------------------
     processTrade(trade) {
         const side = trade.side;
-        const volume = Number(trade.volume);
+        let volume = Number(trade.volume);
 
         if (side !== 'BID' && side !== 'ASK') return;
         if (!Number.isFinite(volume)) return;
 
+        // Order aggregation: combine same-timestamp trades
+        if (this.aggregateOrders) {
+            const timestamp = trade.timestamp || Date.now();
+            const key = `${timestamp}_${side}`;
+            
+            // Add to buffer
+            if (this.aggregationBuffer.has(key)) {
+                this.aggregationBuffer.set(key, this.aggregationBuffer.get(key) + volume);
+            } else {
+                this.aggregationBuffer.set(key, volume);
+            }
+            
+            // Clear aggregation buffer after a brief delay (next event loop)
+            if (this.aggregationTimeout) {
+                clearTimeout(this.aggregationTimeout);
+            }
+            
+            this.aggregationTimeout = setTimeout(() => {
+                // Process all buffered trades
+                for (const [bufferKey, aggVolume] of this.aggregationBuffer.entries()) {
+                    const [, aggSide] = bufferKey.split('_');
+                    this.processAggregatedTrade(aggSide, aggVolume);
+                }
+                this.aggregationBuffer.clear();
+            }, 0);
+            
+            return; // Don't process individual trade
+        }
+
+        // Non-aggregated: process immediately
+        this.processAggregatedTrade(side, volume);
+    }
+
+    processAggregatedTrade(side, volume) {
+        // Update VU meter and stats with (possibly aggregated) volume
         this.vuMeter.updateVolume(side, volume);
         this.updateStats(side, volume);
 
@@ -564,9 +624,17 @@ class TradeFlowApp {
             return;
         }
 
+        // For intelligent/transition modes, we need to pass through the engine
+        // Reconstruct a trade object for the engine
+        const engineTrade = {
+            side: side,
+            volume: volume,
+            timestamp: Date.now()
+        };
+
         // INTELLIGENT mode: use EventEngine
         if (this.audioAlertMode === 'intelligent' && this.eventEngine) {
-            const event = this.eventEngine.ingest(trade);
+            const event = this.eventEngine.ingest(engineTrade);
             if (!event) return;
 
             const pseudoVolume = Math.max(1, Math.round(event.strength * 10));
@@ -576,7 +644,7 @@ class TradeFlowApp {
 
         // TRANSITION mode: use TransitionDetectionEngine
         if (this.audioAlertMode === 'transition' && this.transitionEngine) {
-            const event = this.transitionEngine.ingest(trade);
+            const event = this.transitionEngine.ingest(engineTrade);
             if (!event) return;
 
             // Map transition events to audio

@@ -13,11 +13,31 @@ class VUMeter {
         this.ctx = this.canvas.getContext('2d');
         this.sensitivity = 1.0;
         
+        // Config for debug logging
+        this.config = { debug: false };
+        
         // Sensitivity tuning parameters
         // Adjust these to fine-tune meter response:
-        this.volumeDivisor = 10;      // Lower = more sensitive (was 100)
-        this.powerCurve = 0.6;        // 0.5 = sqrt, 0.6 = slightly aggressive, 0.7 = more aggressive
-        this.amplification = 2.5;     // Overall gain multiplier (was 1.0)
+        this.volumeDivisor = 30;      // Increased to spread range (was 10)
+        this.powerCurve = 0.5;        // Back to sqrt for more linear feel
+        this.amplification = 1.2;     // Slight boost but not excessive
+        
+        // Dynamic rolling maximum
+        this.useDynamicScaling = true;       // Enable adaptive scaling
+        this.volumeHistory = [];             // Track recent volumes
+        this.volumeHistorySize = 500;        // Keep last 500 trades (~10 seconds)
+        this.rollingMax = 10;                // Current dynamic maximum
+        this.rollingPercentile = 95;         // Scale to 95th percentile
+        this.lastRollingUpdate = Date.now(); // Last time we recalculated
+        this.rollingUpdateInterval = 10000;  // Recalc every 10 seconds
+        this.minRollingMax = 3;              // Never scale below 3
+        
+        // Dynamic scaling
+        this.useDynamicScaling = true;       // Enable adaptive scaling
+        this.volumeHistory = [];             // Track recent volumes
+        this.volumeHistoryMaxSize = 200;     // Keep last 200 trades
+        this.dynamicMax = 10;                // Current dynamic maximum
+        this.dynamicPercentile = 95;         // Scale to 95th percentile (not absolute max)
         
         // Meter state
         this.leftLevel = 0;
@@ -51,13 +71,31 @@ class VUMeter {
     
     // Update meter with new volume
     updateVolume(side, volume) {
+        // Add to volume history for rolling maximum calculation
+        if (this.useDynamicScaling) {
+            this.volumeHistory.push(volume);
+            
+            // Maintain history size
+            if (this.volumeHistory.length > this.volumeHistorySize) {
+                this.volumeHistory.shift();
+            }
+            
+            // Update rolling max every N seconds
+            const now = Date.now();
+            if (now - this.lastRollingUpdate >= this.rollingUpdateInterval) {
+                this.updateRollingMax();
+                this.lastRollingUpdate = now;
+            }
+        }
+        
         // Convert volume to level (0-1)
         // Formula breakdown:
-        // 1. volume / volumeDivisor - scales input range
+        // 1. volume / rollingMax - scales input range dynamically
         // 2. Math.pow(..., powerCurve) - shapes response curve
         // 3. * this.sensitivity - user-adjustable sensitivity (from UI slider)
         // 4. * this.amplification - overall gain boost
-        const baseLevel = Math.pow(volume / this.volumeDivisor, this.powerCurve);
+        const divisor = this.useDynamicScaling ? this.rollingMax : this.volumeDivisor;
+        const baseLevel = Math.pow(volume / divisor, this.powerCurve);
         const level = Math.min(baseLevel * this.sensitivity * this.amplification, 1.0);
         
         if (side === 'BID') {
@@ -72,6 +110,25 @@ class VUMeter {
                 this.rightPeak = level;
                 this.rightPeakHold = 30;
             }
+        }
+    }
+    
+    // Update the rolling maximum based on percentile of recent volumes
+    updateRollingMax() {
+        if (this.volumeHistory.length < 20) {
+            // Not enough data yet, keep default
+            return;
+        }
+        
+        // Calculate percentile
+        const sorted = [...this.volumeHistory].sort((a, b) => a - b);
+        const idx = Math.floor(sorted.length * this.rollingPercentile / 100);
+        const newMax = Math.max(sorted[idx], this.minRollingMax);
+        
+        this.rollingMax = newMax;
+        
+        if (this.config?.debug) {
+            console.log(`[VU Meter] Rolling max updated: ${newMax} (${this.rollingPercentile}th percentile of ${this.volumeHistory.length} samples)`);
         }
     }
     
