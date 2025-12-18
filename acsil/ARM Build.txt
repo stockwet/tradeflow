@@ -1,0 +1,2 @@
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" arm64
+cl /Zc:wchar_t /GS /GL /W3 /O2 /Zc:inline /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "_WINDLL" /Oy /Gd /Gy /Oi /GR- /GF /Ot /fp:precise /MT /std:c++17 /LD /EHa /WX- /nologo "C:\Sierra Chart\TFD\ACS_Source\TradeFlowDataExporter.cpp" /link "Gdi32.lib" "User32.lib" "ws2_32.lib" /DLL /DYNAMICBASE /INCREMENTAL:NO /OPT:REF /OPT:ICF /MACHINE:ARM64 /OUT:"C:\Sierra Chart\TFD\Data\TradeFlowDateExporter_ARM64.dll"

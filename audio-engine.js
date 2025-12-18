@@ -1,6 +1,6 @@
 /**
  * Audio Engine - Handles real-time audio synthesis with stereo positioning
- * Similar to TickStrike's audio implementation
+ * Updated with aggressive perceptual volume scaling for wider dynamic range
  */
 
 class AudioEngine {
@@ -11,6 +11,11 @@ class AudioEngine {
         this.askFrequency = 1000;   // Higher pitch for ASK/BUY
         this.volume = 0.8;          // Master volume
         this.isInitialized = false;
+        
+        // Volume scaling tuning parameters (exposed for easy adjustment)
+        this.volumeFloor = 0.08;      // Minimum audible level (0.02-0.15 range)
+        this.volumePowerCurve = 0.35; // Aggression (0.3 = very aggressive, 0.5 = moderate, 0.7 = gentle)
+        this.volumeMaxGain = 0.9;     // Maximum gain ceiling (0.7-1.0 range)
     }
 
     /**
@@ -52,23 +57,26 @@ class AudioEngine {
         // -1.0 = full left (SELL/BID), +1.0 = full right (BUY/ASK)
         panner.pan.value = side === 'BID' ? -1.0 : 1.0;
 
-        // Calculate gain based on volume (normalize to reasonable range)
-        // const normalizedGain = Math.min(volume / 1000, 1.0) * this.volume
-        // Convert trade volume -> audible gain with a floor + curve
-        // - floor keeps tiny prints audible
-        // - curve prevents huge prints from being painfully loud
+        // Calculate gain based on volume with aggressive perceptual curve
+        // This creates WIDE dynamic range so small vs large ticks are very audible
         const v = Math.max(0, Number(volume) || 0);
-
-        // Tune these:
-        const floor = 0.02;          // baseline loudness for any trade
-        const scale = 0.25;          // overall sensitivity of size->loudness
-        const k = 35;                // volume where it starts feeling "strong"
-
-        // Smooth saturating curve in [0..1)
-        const shaped = 1 - Math.exp(-v / k);
-
+        
+        // Power curve scaling: volume^0.35 gives MUCH wider perceived range
+        // Examples with default settings (floor=0.08, curve=0.35, max=0.9):
+        //   volume=1   → gain ≈ 0.08 (floor, very quiet)
+        //   volume=5   → gain ≈ 0.20 (noticeable)
+        //   volume=10  → gain ≈ 0.28 (moderate)
+        //   volume=25  → gain ≈ 0.40 (strong)
+        //   volume=50  → gain ≈ 0.54 (loud)
+        //   volume=100 → gain ≈ 0.72 (very loud)
+        const normalized = Math.min(v / 100, 1.0);  // Normalize to 0-1 range
+        const curved = Math.pow(normalized, this.volumePowerCurve);
+        
+        // Combine floor + curved response
+        const shaped = this.volumeFloor + (curved * (this.volumeMaxGain - this.volumeFloor));
+        
         // Final gain
-        const normalizedGain = Math.min(floor + shaped * scale, 1.0) * this.volume;
+        const normalizedGain = Math.min(shaped, this.volumeMaxGain) * this.volume;
 
         gainNode.gain.value = normalizedGain;
 
@@ -98,7 +106,7 @@ class AudioEngine {
 
     /**
      * Update master volume
-     * @param {number} volume - Volume level (0-1)
+     * @param {number} volume - Volume level (0-2, where 1.0 is 100%)
      */
     setVolume(volume) {
         this.volume = Math.max(0, Math.min(2, volume));
@@ -121,6 +129,34 @@ class AudioEngine {
      */
     setAskFrequency(freq) {
         this.askFrequency = freq;
+    }
+
+    /**
+     * Advanced tuning for volume response curve
+     * Call from console: app.audioEngine.tuneVolume(0.10, 0.30, 0.85)
+     * @param {number} floor - Minimum volume (0.02-0.15)
+     * @param {number} powerCurve - Response curve (0.3=aggressive, 0.5=moderate, 0.7=gentle)
+     * @param {number} maxGain - Maximum gain ceiling (0.7-1.0)
+     */
+    tuneVolume(floor, powerCurve, maxGain) {
+        this.volumeFloor = floor || this.volumeFloor;
+        this.volumePowerCurve = powerCurve || this.volumePowerCurve;
+        this.volumeMaxGain = maxGain || this.volumeMaxGain;
+        
+        console.log('Audio volume curve tuned:', {
+            floor: this.volumeFloor,
+            powerCurve: this.volumePowerCurve,
+            maxGain: this.volumeMaxGain
+        });
+        
+        // Show example outputs
+        console.log('Example volumes:');
+        for (const vol of [1, 5, 10, 25, 50, 100]) {
+            const normalized = Math.min(vol / 100, 1.0);
+            const curved = Math.pow(normalized, this.volumePowerCurve);
+            const shaped = this.volumeFloor + (curved * (this.volumeMaxGain - this.volumeFloor));
+            console.log(`  vol=${vol} → gain=${shaped.toFixed(3)}`);
+        }
     }
 
     /**

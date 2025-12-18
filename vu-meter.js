@@ -1,4 +1,6 @@
 // VU Meter Visualization
+// Updated with improved sensitivity and dynamic range
+
 class VUMeter {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
@@ -10,6 +12,12 @@ class VUMeter {
         
         this.ctx = this.canvas.getContext('2d');
         this.sensitivity = 1.0;
+        
+        // Sensitivity tuning parameters
+        // Adjust these to fine-tune meter response:
+        this.volumeDivisor = 10;      // Lower = more sensitive (was 100)
+        this.powerCurve = 0.6;        // 0.5 = sqrt, 0.6 = slightly aggressive, 0.7 = more aggressive
+        this.amplification = 2.5;     // Overall gain multiplier (was 1.0)
         
         // Meter state
         this.leftLevel = 0;
@@ -44,7 +52,13 @@ class VUMeter {
     // Update meter with new volume
     updateVolume(side, volume) {
         // Convert volume to level (0-1)
-        const level = Math.min(Math.sqrt(volume / 100) * this.sensitivity, 1.0);
+        // Formula breakdown:
+        // 1. volume / volumeDivisor - scales input range
+        // 2. Math.pow(..., powerCurve) - shapes response curve
+        // 3. * this.sensitivity - user-adjustable sensitivity (from UI slider)
+        // 4. * this.amplification - overall gain boost
+        const baseLevel = Math.pow(volume / this.volumeDivisor, this.powerCurve);
+        const level = Math.min(baseLevel * this.sensitivity * this.amplification, 1.0);
         
         if (side === 'BID') {
             this.leftLevel = Math.max(this.leftLevel, level);
@@ -61,9 +75,22 @@ class VUMeter {
         }
     }
     
-    // Set sensitivity (0-1)
+    // Set sensitivity (0-1) - called from UI slider
     setSensitivity(sensitivity) {
         this.sensitivity = Math.max(0, Math.min(1, sensitivity));
+    }
+    
+    // Advanced tuning method - call from console if needed
+    // Example: app.vuMeter.tune(15, 0.65, 2.8)
+    tune(volumeDivisor, powerCurve, amplification) {
+        this.volumeDivisor = volumeDivisor || this.volumeDivisor;
+        this.powerCurve = powerCurve || this.powerCurve;
+        this.amplification = amplification || this.amplification;
+        console.log('VU Meter tuned:', {
+            volumeDivisor: this.volumeDivisor,
+            powerCurve: this.powerCurve,
+            amplification: this.amplification
+        });
     }
     
     // Animation loop

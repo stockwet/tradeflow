@@ -109,7 +109,7 @@ class SocketTickReader {
                 const tick = JSON.parse(line);
                 
                 // Log first 10 ticks with full structure
-                if (this.tickCount < 50) {
+                if (this.tickCount < 10) {
                     console.log(`\n✓ Tick ${this.tickCount + 1} (full data):`);
                     console.log(JSON.stringify(tick, null, 2));
                 }

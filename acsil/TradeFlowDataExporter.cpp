@@ -6,7 +6,7 @@
 // Link with Winsock library
 #pragma comment(lib, "ws2_32.lib")
 
-SCDLLName("TradeFlow TCP Socket Exporter")
+SCDLLName("TradeFlow Data Exporter")
 
 // Structure to hold socket state
 struct SocketState {
@@ -14,16 +14,20 @@ struct SocketState {
     bool Connected;
     int SequenceNumber;
     int64_t LastProcessedSequence;
+    int LastReplayStatus;
+    double LastReplayDateTime;
 };
 
 SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
 {
     SCInputRef Input_Enabled = sc.Input[0];
     SCInputRef Input_Port = sc.Input[1];
+    SCInputRef Input_ReplayBackfill = sc.Input[2];
+    SCInputRef Input_ResetOnReplayJump = sc.Input[3];
     
     if (sc.SetDefaults)
     {
-        sc.GraphName = "Time & Sales TCP Socket Exporter";
+        sc.GraphName = "TradeFlow Data Exporter";
         sc.StudyDescription = "Sends real-time tick data over TCP socket";
         sc.GraphRegion = 0;
         sc.AutoLoop = 0;
@@ -33,9 +37,15 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
         Input_Enabled.Name = "Enable Export";
         Input_Enabled.SetYesNo(0);
         
-        Input_Port.Name = "TCP Port";
+                Input_Port.Name = "TCP Port";
         Input_Port.SetInt(9999);
-        
+
+        Input_ReplayBackfill.Name = "Replay: Backfill existing Time & Sales on start";
+        Input_ReplayBackfill.SetYesNo(1);
+
+        Input_ResetOnReplayJump.Name = "Replay: Reset on replay start/stop or time jump";
+        Input_ResetOnReplayJump.SetYesNo(1);
+
         return;
     }
     
@@ -53,6 +63,8 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
         pState->Connected = false;
         pState->SequenceNumber = 0;
         pState->LastProcessedSequence = 0;
+        pState->LastReplayStatus = 0;
+        pState->LastReplayDateTime = 0.0;
         sc.SetPersistentPointer(1, pState);
         
         // Initialize Winsock
@@ -61,7 +73,7 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
         if (result != 0)
         {
             sc.AddMessageToLog("Failed to initialize Winsock", 1);
-            return;
+            return; 
         }
         
         sc.AddMessageToLog("Socket Exporter: Initialized", 0);
@@ -71,61 +83,93 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
     // Try to connect if not connected
     if (!pState->Connected)
     {
-        // Create socket only if we don't have one
+        // Create socket only if we don't already have one
         if (pState->ClientSocket == INVALID_SOCKET)
         {
             pState->ClientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (pState->ClientSocket == INVALID_SOCKET)
-            {
                 return;
-            }
-            
+
             // Set non-blocking mode
             u_long mode = 1;
             ioctlsocket(pState->ClientSocket, FIONBIO, &mode);
         }
-        
-        // Only connect if socket is valid and not connected
+
+        // Connect to localhost
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_port = htons(Input_Port.GetInt());
         serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-        
+
         int connectResult = connect(pState->ClientSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
-        
+
         if (connectResult == SOCKET_ERROR)
         {
             int error = WSAGetLastError();
-            if (error == WSAEWOULDBLOCK)
-            {
-                // Connection in progress - check later
+
+            // Non-blocking connect in progress (or already in progress)
+            if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS || error == WSAEALREADY)
                 return;
-            }
-            else if (error == WSAEISCONN)
+
+            // Connected (some stacks report "already connected" via error)
+            if (error == WSAEISCONN)
             {
-                // Already connected
                 pState->Connected = true;
                 sc.AddMessageToLog("Socket Exporter: Connected", 0);
             }
             else
             {
-                // Connection failed
+                // Hard failure: close and retry later
                 closesocket(pState->ClientSocket);
                 pState->ClientSocket = INVALID_SOCKET;
+                pState->Connected = false;
                 return;
             }
         }
         else
         {
+            // Immediate connect success
             pState->Connected = true;
             sc.AddMessageToLog("Socket Exporter: Connected", 0);
         }
     }
+
     
     if (!pState->Connected)
         return;
     
-    // Get symbol
+    
+    // Replay handling: reset sequence tracking when replay starts/stops or time jumps backward
+    const int ReplayStatus = sc.ReplayStatus;
+    const bool IsReplaying = (ReplayStatus != 0);
+
+    if (Input_ResetOnReplayJump.GetYesNo())
+    {
+        // Detect replay start/stop
+        if (pState->LastReplayStatus != ReplayStatus)
+        {
+            pState->LastProcessedSequence = 0;
+            pState->LastReplayStatus = ReplayStatus;
+            pState->LastReplayDateTime = 0.0;
+        }
+
+        // Detect replay time jump backward (restart/seek)
+        if (IsReplaying)
+        {
+            const double CurrentReplayDT = sc.CurrentDateTimeForReplay.GetAsDouble();
+            if (pState->LastReplayDateTime != 0.0 && CurrentReplayDT + 1e-9 < pState->LastReplayDateTime)
+            {
+                pState->LastProcessedSequence = 0;
+            }
+            pState->LastReplayDateTime = CurrentReplayDT;
+        }
+        else
+        {
+            pState->LastReplayDateTime = 0.0;
+        }
+    }
+
+// Get symbol
     SCString SymbolName = sc.GetRealTimeSymbol();
     
     // Get Time and Sales
@@ -134,12 +178,27 @@ SCSFExport scsf_TimeAndSalesToSocket(SCStudyInterfaceRef sc)
     
     if (TimeSales.Size() == 0)
         return;
+
+    // If replay/seek causes sequences to restart, reset tracking
+    if (TimeSales[TimeSales.Size() - 1].Sequence < pState->LastProcessedSequence)
+        pState->LastProcessedSequence = 0;
     
     // Set initial sequence if needed
     if (pState->LastProcessedSequence == 0)
     {
-        pState->LastProcessedSequence = TimeSales[TimeSales.Size() - 1].Sequence;
-        return;
+        // In real-time operation, start from the most recent record to avoid flooding.
+        // In replay, optionally backfill the existing Time & Sales records immediately.
+        if (IsReplaying && Input_ReplayBackfill.GetYesNo())
+        {
+            int64_t FirstSeq = TimeSales[0].Sequence;
+            pState->LastProcessedSequence = (FirstSeq > 0) ? (FirstSeq - 1) : 0;
+            // Do not return: allow backfill to stream immediately.
+        }
+        else
+        {
+            pState->LastProcessedSequence = TimeSales[TimeSales.Size() - 1].Sequence;
+            return;
+        }
     }
     
     // Process new ticks
