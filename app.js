@@ -1,31 +1,35 @@
 // app.js
-// Main application logic with Transition Detection Engine support
+// Main application logic
 
 class TradeFlowApp {
     constructor() {
         this.audioEngine = new AudioEngine();
         this.vuMeter = new VUMeter('vu-meter-canvas');
         this.dataPlayer = new DataPlayer();
+        this.imbalanceMeter = new ImbalanceMeter('imbalance-meter', {
+            maxAbs: 30,        // tune per instrument
+            smoothing: 0.15,
+            segments: 10
+            });
+
 
         // WebSocket state
         this.websocket = null;
         this.connectionStatus = 'disconnected';
         this.dataMode = 'websocket';  // 'websocket' or 'playback'
 
-        // Audio alert mode: 'raw', 'intelligent', or 'transition'
+        // Audio alert mode
         this.audioAlertMode = 'intelligent';
 
-        // Order aggregation
-        this.aggregateOrders = false;      // Toggle to combine same-timestamp orders
-        this.aggregationBuffer = new Map(); // timestamp+side -> accumulated volume
-        this.aggregationTimeout = null;
+        // Event Engine
+        this.eventEngine = null;
+        this.initializeEventEngine();
 
-        // Engines
-        this.eventEngine = null;           // Intelligent mode (continuous flow)
-        this.transitionEngine = null;      // Transition detection mode
-        this.initializeEngines();
+        // ---- Rolling rate settings (NEW) ----
+        this.rateWindowMs = 5000; // last 2 seconds (tweak as desired)
+        this.recentTrades = [];   // each: { t, side, volume }
 
-        // Stats
+        // ---- Totals (lifetime since last reset/start) ----
         this.stats = {
             sellCount: 0,
             buyCount: 0,
@@ -42,7 +46,7 @@ class TradeFlowApp {
     // -----------------------------
     // Defaults + persistence
     // -----------------------------
-    getDefaultEventEngineConfig() {
+    getDefaultEngineConfig() {
         return {
             windowMs: 300,
             dominanceMetric: 'volume',
@@ -53,23 +57,6 @@ class TradeFlowApp {
             requireSustainedMs: 80,
             lockSideMs: 150,
             cooldownMs: 0
-        };
-    }
-
-    getDefaultTransitionEngineConfig() {
-        return {
-            windowMs: 1000,
-            dominanceMetric: 'volume',
-            thrustThreshold: 0.60,
-            thrustChange: 0.30,
-            thrustMinVelocity: 20,
-            pullbackThreshold: 0.30,
-            pullbackFade: 0.20,
-            absorptionThreshold: 0.20,
-            absorptionMinVelocity: 20,
-            absorptionMinTrades: 15,
-            minEventInterval: 500,
-            historyDepth: 3
         };
     }
 
@@ -88,54 +75,33 @@ class TradeFlowApp {
     }
 
     // -----------------------------
-    // Engine initialization
+    // Event engine init
     // -----------------------------
-    initializeEngines() {
-        // Initialize EventEngine (intelligent mode)
-        if (typeof EventEngine !== 'undefined') {
-            const saved = this.loadSettings();
-            const defaults = this.getDefaultEventEngineConfig();
-
-            const eventConfig = {
-                ...defaults,
-                ...(saved?.eventEngineConfig || {}),
-                minTotalVolumeInWindow: 0,
-                debug: false
-            };
-
-            this.eventEngine = new EventEngine(eventConfig);
-        } else {
-            console.warn('EventEngine not found. Ensure event-engine.js is loaded.');
+    initializeEventEngine() {
+        if (typeof EventEngine === 'undefined') {
+            console.warn('EventEngine not found. Ensure event-engine.js is loaded before app.js.');
+            return;
         }
 
-        // Initialize TransitionDetectionEngine (transition mode)
-        if (typeof TransitionDetectionEngine !== 'undefined') {
-            const saved = this.loadSettings();
-            const defaults = this.getDefaultTransitionEngineConfig();
-
-            const transitionConfig = {
-                ...defaults,
-                ...(saved?.transitionEngineConfig || {}),
-                debug: false
-            };
-
-            this.transitionEngine = new TransitionDetectionEngine(transitionConfig);
-        } else {
-            console.warn('TransitionDetectionEngine not found. Ensure transition-detection-engine.js is loaded.');
-        }
-
-        // Load audio mode preference
         const saved = this.loadSettings();
+        const defaults = this.getDefaultEngineConfig();
+
+        const engineConfig = {
+            ...defaults,
+            ...(saved?.engineConfig || {}),
+            minTotalVolumeInWindow: 0,
+            debug: false
+        };
+
+        this.eventEngine = new EventEngine(engineConfig);
+
         if (saved?.audioAlertMode) {
             this.audioAlertMode = saved.audioAlertMode;
-        }
-        if (saved?.aggregateOrders !== undefined) {
-            this.aggregateOrders = saved.aggregateOrders;
         }
     }
 
     // -----------------------------
-    // UI initialization
+    // UI init
     // -----------------------------
     initializeUI() {
         // Enable audio on first click (autoplay policy)
@@ -146,48 +112,13 @@ class TradeFlowApp {
             }
         }, { once: true });
 
-        // Audio mode selector
-        const audioModeSelect = document.getElementById('audio-alert-mode');
-        if (audioModeSelect) {
-            audioModeSelect.value = this.audioAlertMode;
-            audioModeSelect.addEventListener('change', (e) => {
-                this.audioAlertMode = e.target.value;
-                this.updateSettingsSectionsVisibility();
-                this.saveSettings({
-                    audioAlertMode: this.audioAlertMode,
-                    aggregateOrders: this.aggregateOrders,
-                    eventEngineConfig: this.eventEngine?.config || this.getDefaultEventEngineConfig(),
-                    transitionEngineConfig: this.transitionEngine?.config || this.getDefaultTransitionEngineConfig()
-                });
-            });
-        }
-
-        // Aggregate orders toggle
-        const aggregateCheckbox = document.getElementById('aggregate-orders');
-        if (aggregateCheckbox) {
-            aggregateCheckbox.checked = this.aggregateOrders;
-            aggregateCheckbox.addEventListener('change', (e) => {
-                this.aggregateOrders = e.target.checked;
-                this.saveSettings({
-                    audioAlertMode: this.audioAlertMode,
-                    aggregateOrders: this.aggregateOrders,
-                    eventEngineConfig: this.eventEngine?.config || this.getDefaultEventEngineConfig(),
-                    transitionEngineConfig: this.transitionEngine?.config || this.getDefaultTransitionEngineConfig()
-                });
-                console.log('Order aggregation:', this.aggregateOrders ? 'enabled' : 'disabled');
-            });
-        }
-
         // Master volume control
         const volumeSlider = document.getElementById('master-volume');
         const volumeValue = document.getElementById('volume-value');
-
         if (volumeSlider && volumeValue) {
             volumeSlider.addEventListener('input', (e) => {
-                const pct = parseInt(e.target.value, 10);
-                const x = pct / 100;
-                const curved = Math.pow(x, 1.6);
-                this.audioEngine.setVolume(curved);
+                const volume = parseInt(e.target.value, 10) / 100;
+                this.audioEngine.setVolume(volume);
                 volumeValue.textContent = e.target.value + '%';
             });
         }
@@ -195,7 +126,6 @@ class TradeFlowApp {
         // BID frequency control
         const bidFreqSlider = document.getElementById('bid-frequency');
         const bidFreqValue = document.getElementById('bid-freq-value');
-
         if (bidFreqSlider && bidFreqValue) {
             bidFreqSlider.addEventListener('input', (e) => {
                 const freq = parseInt(e.target.value, 10);
@@ -207,7 +137,6 @@ class TradeFlowApp {
         // ASK frequency control
         const askFreqSlider = document.getElementById('ask-frequency');
         const askFreqValue = document.getElementById('ask-freq-value');
-
         if (askFreqSlider && askFreqValue) {
             askFreqSlider.addEventListener('input', (e) => {
                 const freq = parseInt(e.target.value, 10);
@@ -219,7 +148,6 @@ class TradeFlowApp {
         // Sensitivity control
         const sensitivitySlider = document.getElementById('sensitivity');
         const sensitivityValue = document.getElementById('sensitivity-value');
-
         if (sensitivitySlider && sensitivityValue) {
             sensitivitySlider.addEventListener('input', (e) => {
                 const sensitivity = parseInt(e.target.value, 10) / 100;
@@ -241,7 +169,6 @@ class TradeFlowApp {
         const playBtn = document.getElementById('play-btn');
         const pauseBtn = document.getElementById('pause-btn');
         const stopBtn = document.getElementById('stop-btn');
-
         if (playBtn) playBtn.addEventListener('click', () => this.handlePlay());
         if (pauseBtn) pauseBtn.addEventListener('click', () => this.handlePause());
         if (stopBtn) stopBtn.addEventListener('click', () => this.handleStop());
@@ -257,7 +184,6 @@ class TradeFlowApp {
         // Speed control
         const speedSlider = document.getElementById('playback-speed');
         const speedValue = document.getElementById('speed-value');
-
         if (speedSlider && speedValue) {
             speedSlider.addEventListener('input', (e) => {
                 const speed = parseFloat(e.target.value);
@@ -277,24 +203,18 @@ class TradeFlowApp {
 
         // WebSocket reconnect button
         const reconnectBtn = document.getElementById('reconnect-btn');
-        if (reconnectBtn) {
-            reconnectBtn.addEventListener('click', () => {
-                this.connectWebSocket();
-            });
-        }
+        if (reconnectBtn) reconnectBtn.addEventListener('click', () => this.connectWebSocket());
 
         this.updateUIForMode();
 
-        // Settings drawer
+        // Settings drawer wiring
         this.initializeSettingsDrawer();
         this.populateSettingsUIFromCurrent();
-        this.updateSettingsSectionsVisibility();
     }
 
     updateUIForMode() {
         const playbackControls = document.getElementById('playback-controls');
         const websocketStatus = document.getElementById('websocket-status');
-
         if (!playbackControls || !websocketStatus) return;
 
         if (this.dataMode === 'websocket') {
@@ -306,21 +226,8 @@ class TradeFlowApp {
         }
     }
 
-    updateSettingsSectionsVisibility() {
-        const intelligentSection = document.getElementById('intelligent-settings');
-        const transitionSection = document.getElementById('transition-settings');
-
-        if (intelligentSection) {
-            intelligentSection.classList.toggle('active', this.audioAlertMode === 'intelligent');
-        }
-
-        if (transitionSection) {
-            transitionSection.classList.toggle('active', this.audioAlertMode === 'transition');
-        }
-    }
-
     // -----------------------------
-    // Settings drawer
+    // Settings drawer methods
     // -----------------------------
     initializeSettingsDrawer() {
         const openBtn = document.getElementById('open-settings-btn');
@@ -333,26 +240,27 @@ class TradeFlowApp {
 
         if (!overlay || !drawer) return;
 
-        const openDrawer = () => {
+        const open = () => {
             overlay.style.display = 'block';
             drawer.classList.add('open');
             drawer.setAttribute('aria-hidden', 'false');
+            this.populateSettingsUIFromCurrent();
         };
 
-        const closeDrawer = () => {
+        const close = () => {
             overlay.style.display = 'none';
             drawer.classList.remove('open');
             drawer.setAttribute('aria-hidden', 'true');
         };
 
-        if (openBtn) openBtn.addEventListener('click', openDrawer);
-        if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
-        if (overlay) overlay.addEventListener('click', closeDrawer);
+        if (openBtn) openBtn.addEventListener('click', open);
+        if (closeBtn) closeBtn.addEventListener('click', close);
+        overlay.addEventListener('click', close);
 
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
-                this.applySettings();
-                closeDrawer();
+                this.applySettingsFromUI();
+                close();
             });
         }
 
@@ -365,135 +273,89 @@ class TradeFlowApp {
     }
 
     populateSettingsUIFromCurrent() {
-        // Populate EventEngine settings
-        if (this.eventEngine) {
-            const cfg = this.eventEngine.config || this.getDefaultEventEngineConfig();
-            this.setInputValue('engine-windowMs', cfg.windowMs);
-            this.setInputValue('engine-dominanceMetric', cfg.dominanceMetric);
-            this.setInputValue('engine-enterDominance', cfg.enterDominance);
-            this.setInputValue('engine-exitDominance', cfg.exitDominance);
-            this.setInputValue('engine-minTradesPerSec', cfg.minTradesPerSec);
-            this.setInputValue('engine-maxEventsPerSec', cfg.maxEventsPerSec);
-            this.setInputValue('engine-requireSustainedMs', cfg.requireSustainedMs);
-            this.setInputValue('engine-lockSideMs', cfg.lockSideMs);
-            this.setInputValue('engine-cooldownMs', cfg.cooldownMs);
-        }
+        const modeSelect = document.getElementById('audio-alert-mode');
+        if (modeSelect) modeSelect.value = this.audioAlertMode || 'raw';
 
-        // Populate TransitionEngine settings
-        if (this.transitionEngine) {
-            const cfg = this.transitionEngine.config || this.getDefaultTransitionEngineConfig();
-            this.setInputValue('transition-windowMs', cfg.windowMs);
-            this.setInputValue('transition-dominanceMetric', cfg.dominanceMetric);
-            this.setInputValue('transition-thrustThreshold', cfg.thrustThreshold);
-            this.setInputValue('transition-thrustChange', cfg.thrustChange);
-            this.setInputValue('transition-thrustMinVelocity', cfg.thrustMinVelocity);
-            this.setInputValue('transition-pullbackThreshold', cfg.pullbackThreshold);
-            this.setInputValue('transition-pullbackFade', cfg.pullbackFade);
-            this.setInputValue('transition-absorptionThreshold', cfg.absorptionThreshold);
-            this.setInputValue('transition-minEventInterval', cfg.minEventInterval);
-            this.setInputValue('transition-historyDepth', cfg.historyDepth);
-        }
+        const cfg = (this.eventEngine && this.eventEngine.getState)
+            ? this.eventEngine.getState().config
+            : this.getDefaultEngineConfig();
 
-        // Set audio mode dropdown
-        const audioModeSelect = document.getElementById('audio-alert-mode');
-        if (audioModeSelect) {
-            audioModeSelect.value = this.audioAlertMode;
-        }
-    }
-
-    setInputValue(id, value) {
-        const el = document.getElementById(id);
-        if (el) el.value = value;
-    }
-
-    getInputValue(id) {
-        const el = document.getElementById(id);
-        if (!el) return null;
-        if (el.type === 'number') return parseFloat(el.value);
-        return el.value;
-    }
-
-    applySettings() {
-        // Collect EventEngine settings
-        const eventEngineConfig = {
-            windowMs: this.getInputValue('engine-windowMs'),
-            dominanceMetric: this.getInputValue('engine-dominanceMetric'),
-            enterDominance: this.getInputValue('engine-enterDominance'),
-            exitDominance: this.getInputValue('engine-exitDominance'),
-            minTradesPerSec: this.getInputValue('engine-minTradesPerSec'),
-            maxEventsPerSec: this.getInputValue('engine-maxEventsPerSec'),
-            requireSustainedMs: this.getInputValue('engine-requireSustainedMs'),
-            lockSideMs: this.getInputValue('engine-lockSideMs'),
-            cooldownMs: this.getInputValue('engine-cooldownMs')
+        const setVal = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value;
         };
 
-        // Collect TransitionEngine settings
-        const transitionEngineConfig = {
-            windowMs: this.getInputValue('transition-windowMs'),
-            dominanceMetric: this.getInputValue('transition-dominanceMetric'),
-            thrustThreshold: this.getInputValue('transition-thrustThreshold'),
-            thrustChange: this.getInputValue('transition-thrustChange'),
-            thrustMinVelocity: this.getInputValue('transition-thrustMinVelocity'),
-            pullbackThreshold: this.getInputValue('transition-pullbackThreshold'),
-            pullbackFade: this.getInputValue('transition-pullbackFade'),
-            absorptionThreshold: this.getInputValue('transition-absorptionThreshold'),
-            minEventInterval: this.getInputValue('transition-minEventInterval'),
-            historyDepth: this.getInputValue('transition-historyDepth')
+        setVal('engine-windowMs', cfg.windowMs);
+        setVal('engine-dominanceMetric', cfg.dominanceMetric);
+        setVal('engine-enterDominance', cfg.enterDominance);
+        setVal('engine-exitDominance', cfg.exitDominance);
+        setVal('engine-minTradesPerSec', cfg.minTradesPerSec);
+        setVal('engine-maxEventsPerSec', cfg.maxEventsPerSec);
+        setVal('engine-requireSustainedMs', cfg.requireSustainedMs);
+        setVal('engine-lockSideMs', cfg.lockSideMs);
+        setVal('engine-cooldownMs', cfg.cooldownMs);
+    }
+
+    applySettingsFromUI() {
+        const modeSelect = document.getElementById('audio-alert-mode');
+        this.audioAlertMode = modeSelect ? modeSelect.value : 'raw';
+
+        const readNum = (id) => {
+            const el = document.getElementById(id);
+            if (!el) return null;
+            const v = Number(el.value);
+            return Number.isFinite(v) ? v : null;
         };
 
-        // Update engines
+        const readStr = (id) => {
+            const el = document.getElementById(id);
+            return el ? String(el.value) : null;
+        };
+
+        const engineConfig = {
+            windowMs: readNum('engine-windowMs'),
+            dominanceMetric: readStr('engine-dominanceMetric'),
+            enterDominance: readNum('engine-enterDominance'),
+            exitDominance: readNum('engine-exitDominance'),
+            minTradesPerSec: readNum('engine-minTradesPerSec'),
+            maxEventsPerSec: readNum('engine-maxEventsPerSec'),
+            requireSustainedMs: readNum('engine-requireSustainedMs'),
+            lockSideMs: readNum('engine-lockSideMs'),
+            cooldownMs: readNum('engine-cooldownMs')
+        };
+
+        Object.keys(engineConfig).forEach(k => {
+            if (engineConfig[k] === null || engineConfig[k] === '') delete engineConfig[k];
+        });
+
         if (this.eventEngine && this.eventEngine.updateConfig) {
-            this.eventEngine.updateConfig(eventEngineConfig);
+            this.eventEngine.updateConfig(engineConfig);
             this.eventEngine.reset();
         }
 
-        if (this.transitionEngine && this.transitionEngine.updateConfig) {
-            this.transitionEngine.updateConfig(transitionEngineConfig);
-            this.transitionEngine.reset();
-        }
-
-        // Save to localStorage
         this.saveSettings({
             audioAlertMode: this.audioAlertMode,
-            eventEngineConfig: eventEngineConfig,
-            transitionEngineConfig: transitionEngineConfig
+            engineConfig: (this.eventEngine && this.eventEngine.getState)
+                ? this.eventEngine.getState().config
+                : engineConfig
         });
 
-        console.log('Settings applied:', {
-            audioAlertMode: this.audioAlertMode,
-            eventEngineConfig,
-            transitionEngineConfig
-        });
+        console.log('Settings applied:', { audioAlertMode: this.audioAlertMode, engineConfig });
     }
 
     resetSettingsToDefaults() {
-        const eventDefaults = this.getDefaultEventEngineConfig();
-        const transitionDefaults = this.getDefaultTransitionEngineConfig();
-        this.audioAlertMode = 'intelligent';
+        const defaults = this.getDefaultEngineConfig();
+        this.audioAlertMode = 'raw';
 
         if (this.eventEngine && this.eventEngine.updateConfig) {
-            this.eventEngine.updateConfig(eventDefaults);
+            this.eventEngine.updateConfig(defaults);
             this.eventEngine.reset();
-        }
-
-        if (this.transitionEngine && this.transitionEngine.updateConfig) {
-            this.transitionEngine.updateConfig(transitionDefaults);
-            this.transitionEngine.reset();
         }
 
         this.saveSettings({
             audioAlertMode: this.audioAlertMode,
-            eventEngineConfig: eventDefaults,
-            transitionEngineConfig: transitionDefaults
+            engineConfig: defaults
         });
-
-        // Update UI dropdown
-        const audioModeSelect = document.getElementById('audio-alert-mode');
-        if (audioModeSelect) {
-            audioModeSelect.value = this.audioAlertMode;
-        }
-
-        this.updateSettingsSectionsVisibility();
     }
 
     // -----------------------------
@@ -530,9 +392,7 @@ class TradeFlowApp {
             this.websocket.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-                    if (message.type === 'trade') {
-                        this.handleTrade(message.data);
-                    }
+                    if (message.type === 'trade') this.handleTrade(message.data);
                 } catch (err) {
                     console.error('Failed to parse WebSocket message:', err);
                 }
@@ -575,111 +435,26 @@ class TradeFlowApp {
     // -----------------------------
     processTrade(trade) {
         const side = trade.side;
-        let volume = Number(trade.volume);
+        const volume = Number(trade.volume);
 
         if (side !== 'BID' && side !== 'ASK') return;
         if (!Number.isFinite(volume)) return;
 
-        // Order aggregation: combine same-timestamp trades
-        if (this.aggregateOrders) {
-            const timestamp = trade.timestamp || Date.now();
-            const key = `${timestamp}_${side}`;
-            
-            // Add to buffer
-            if (this.aggregationBuffer.has(key)) {
-                this.aggregationBuffer.set(key, this.aggregationBuffer.get(key) + volume);
-            } else {
-                this.aggregationBuffer.set(key, volume);
-            }
-            
-            // Clear aggregation buffer after a brief delay (next event loop)
-            if (this.aggregationTimeout) {
-                clearTimeout(this.aggregationTimeout);
-            }
-            
-            this.aggregationTimeout = setTimeout(() => {
-                // Process all buffered trades
-                for (const [bufferKey, aggVolume] of this.aggregationBuffer.entries()) {
-                    const [, aggSide] = bufferKey.split('_');
-                    this.processAggregatedTrade(aggSide, aggVolume);
-                }
-                this.aggregationBuffer.clear();
-            }, 0);
-            
-            return; // Don't process individual trade
-        }
-
-        // Non-aggregated: process immediately
-        this.processAggregatedTrade(side, volume);
-    }
-
-    processAggregatedTrade(side, volume) {
-        // Update VU meter and stats with (possibly aggregated) volume
         this.vuMeter.updateVolume(side, volume);
+
+        // totals + rolling buffer
         this.updateStats(side, volume);
 
-        // RAW mode: play every trade
-        if (this.audioAlertMode === 'raw') {
+        if (this.audioAlertMode === 'raw' || !this.eventEngine) {
             this.audioEngine.playTrade(side, volume);
             return;
         }
 
-        // For intelligent/transition modes, we need to pass through the engine
-        // Reconstruct a trade object for the engine
-        const engineTrade = {
-            side: side,
-            volume: volume,
-            timestamp: Date.now()
-        };
+        const event = this.eventEngine.ingest(trade);
+        if (!event) return;
 
-        // INTELLIGENT mode: use EventEngine
-        if (this.audioAlertMode === 'intelligent' && this.eventEngine) {
-            const event = this.eventEngine.ingest(engineTrade);
-            if (!event) return;
-
-            const pseudoVolume = Math.max(1, Math.round(event.strength * 10));
-            this.audioEngine.playTrade(event.side, pseudoVolume);
-            return;
-        }
-
-        // TRANSITION mode: use TransitionDetectionEngine
-        if (this.audioAlertMode === 'transition' && this.transitionEngine) {
-            const event = this.transitionEngine.ingest(engineTrade);
-            if (!event) return;
-
-            // Map transition events to audio
-            this.playTransitionEvent(event);
-            return;
-        }
-    }
-
-    playTransitionEvent(event) {
-        // Map transition events to distinct audio signatures
-        const strength = Math.abs(event.imbalance);
-        const pseudoVolume = Math.max(1, Math.round(strength * 10));
-
-        switch (event.transitionType) {
-            case 'THRUST_UP':
-                // Strong buying - play on right (ASK)
-                this.audioEngine.playTrade('ASK', pseudoVolume);
-                break;
-
-            case 'THRUST_DOWN':
-                // Strong selling - play on left (BID)
-                this.audioEngine.playTrade('BID', pseudoVolume);
-                break;
-
-            case 'PULLBACK_EXHAUSTION':
-                // Pullback ending - play based on trend direction
-                const side = event.trendDirection === 'UP' ? 'ASK' : 'BID';
-                this.audioEngine.playTrade(side, Math.max(1, pseudoVolume / 2));
-                break;
-
-            case 'ABSORPTION':
-                // Absorption - play balanced/center (alternate or quieter)
-                this.audioEngine.playTrade('BID', Math.max(1, pseudoVolume / 3));
-                break;
-        }
+        const pseudoVolume = Math.max(1, Math.round(event.strength * 10));
+        this.audioEngine.playTrade(event.side, pseudoVolume);
     }
 
     handleTrade(trade) {
@@ -700,14 +475,8 @@ class TradeFlowApp {
         });
     }
 
-    handlePause() {
-        this.dataPlayer.pause();
-    }
-
-    handleStop() {
-        this.dataPlayer.stop();
-        this.resetStats();
-    }
+    handlePause() { this.dataPlayer.pause(); }
+    handleStop()  { this.dataPlayer.stop(); this.resetStats(); }
 
     handleFileUpload(file) {
         if (!file) return;
@@ -722,13 +491,16 @@ class TradeFlowApp {
     }
 
     // -----------------------------
-    // Stats
+    // Stats (Totals + Rolling Window)  (UPDATED)
     // -----------------------------
     updateStats(side, volume) {
+        const now = Date.now();
+
         if (!this.stats.startTime) {
-            this.stats.startTime = Date.now();
+            this.stats.startTime = now;
         }
 
+        // Totals (lifetime)
         if (side === 'BID') {
             this.stats.sellCount++;
             this.stats.sellVolume += volume;
@@ -736,69 +508,107 @@ class TradeFlowApp {
             this.stats.buyCount++;
             this.stats.buyVolume += volume;
         }
+
+        // Rolling buffer
+        this.recentTrades.push({ t: now, side, volume });
+        this.pruneRecentTrades(now);
+    }
+
+    pruneRecentTrades(now = Date.now()) {
+        const cutoff = now - this.rateWindowMs;
+
+        // Efficient prune from front (array shift cost is ok at these sizes, but keep it tight)
+        // If you ever push huge volumes, we can switch to a ring buffer.
+        while (this.recentTrades.length > 0 && this.recentTrades[0].t < cutoff) {
+            this.recentTrades.shift();
+        }
+    }
+
+    computeRollingRates() {
+        const now = Date.now();
+        this.pruneRecentTrades(now);
+
+        const windowSec = this.rateWindowMs / 1000;
+
+        let sellTrades = 0, buyTrades = 0;
+        let sellVol = 0, buyVol = 0;
+
+        for (const tr of this.recentTrades) {
+            if (tr.side === 'BID') {
+                sellTrades++;
+                sellVol += tr.volume;
+            } else if (tr.side === 'ASK') {
+                buyTrades++;
+                buyVol += tr.volume;
+            }
+        }
+
+        const sellTradesPerSec = sellTrades / windowSec;
+        const buyTradesPerSec = buyTrades / windowSec;
+        const sellVolPerSec = sellVol / windowSec;
+        const buyVolPerSec = buyVol / windowSec;
+
+        return {
+            sellTradesPerSec,
+            buyTradesPerSec,
+            sellVolPerSec,
+            buyVolPerSec,
+            imbalanceTradesPerSec: buyTradesPerSec - sellTradesPerSec,
+            imbalanceVolPerSec: buyVolPerSec - sellVolPerSec
+        };
     }
 
     resetStats() {
+        const now = Date.now();
+
         this.stats = {
             sellCount: 0,
             buyCount: 0,
             sellVolume: 0,
             buyVolume: 0,
-            startTime: Date.now()
+            startTime: now
         };
 
-        if (this.eventEngine) {
-            this.eventEngine.reset();
-        }
+        this.recentTrades = [];
 
-        if (this.transitionEngine) {
-            this.transitionEngine.reset();
-        }
+        if (this.eventEngine) this.eventEngine.reset();
     }
 
     startStatsUpdate() {
-        setInterval(() => {
-            this.updateStatsDisplay();
-        }, 100);
+        setInterval(() => this.updateStatsDisplay(), 100);
     }
 
     updateStatsDisplay() {
         const setText = (id, value) => {
             const el = document.getElementById(id);
-            if (!el) return;
-            el.textContent = value;
+            if (el) el.textContent = value;
         };
 
+        // Totals
         setText('sell-count', this.stats.sellCount);
         setText('buy-count', this.stats.buyCount);
         setText('sell-volume', this.stats.sellVolume);
         setText('buy-volume', this.stats.buyVolume);
 
-        if (!this.stats.startTime) return;
-
-        const elapsed = (Date.now() - this.stats.startTime) / 1000;
-        if (elapsed <= 0) {
-            setText('sell-trades-per-sec', '0.0');
-            setText('buy-trades-per-sec', '0.0');
-            setText('sell-vol-per-sec', '0.0');
-            setText('buy-vol-per-sec', '0.0');
-            setText('events-per-sec', '0.0');
-            return;
+        // Rolling rates
+        const r = this.computeRollingRates();
+        // r.imbalanceVolPerSec = buyVolPerSec - sellVolPerSec
+        if (this.imbalanceMeter) {
+            this.imbalanceMeter.update(r.imbalanceVolPerSec);
         }
 
-        const sellTradesPerSec = this.stats.sellCount / elapsed;
-        const buyTradesPerSec = this.stats.buyCount / elapsed;
-        const sellVolPerSec = this.stats.sellVolume / elapsed;
-        const buyVolPerSec = this.stats.buyVolume / elapsed;
+        setText('sell-trades-per-sec', r.sellTradesPerSec.toFixed(1));
+        setText('buy-trades-per-sec', r.buyTradesPerSec.toFixed(1));
+        setText('sell-vol-per-sec', r.sellVolPerSec.toFixed(1));
+        setText('buy-vol-per-sec', r.buyVolPerSec.toFixed(1));
 
-        setText('sell-trades-per-sec', sellTradesPerSec.toFixed(1));
-        setText('buy-trades-per-sec', buyTradesPerSec.toFixed(1));
-        setText('sell-vol-per-sec', sellVolPerSec.toFixed(1));
-        setText('buy-vol-per-sec', buyVolPerSec.toFixed(1));
+        // Optional: imbalance fields (only if you add the IDs in HTML)
+        setText('imbalance-trades-per-sec', r.imbalanceTradesPerSec.toFixed(1));
+        setText('imbalance-vol-per-sec', r.imbalanceVolPerSec.toFixed(1));
 
-        const totalEvents = this.stats.sellCount + this.stats.buyCount;
-        const eventsPerSec = totalEvents / elapsed;
-        setText('events-per-sec', eventsPerSec.toFixed(1));
+        // Keep compatibility field (hidden in your HTML)
+        const totalEventsPerSec = (r.sellTradesPerSec + r.buyTradesPerSec);
+        setText('events-per-sec', totalEventsPerSec.toFixed(1));
     }
 }
 

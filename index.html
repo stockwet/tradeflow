@@ -153,6 +153,12 @@
             <!-- Keep this for compatibility -->
             <span id="events-per-sec" style="display: none">0.0</span>
           </div>
+          <div class="imbalance-meter-wrap">
+            <div class="imbalance-meter-label">Vol/sec Imbalance</div>
+            <canvas id="imbalance-meter"></canvas>
+          </div>
+
+
         </div>
       </div>
     </div>
@@ -479,6 +485,7 @@
     <script src="components/data-player.js"></script>
     <script src="components/event-engine.js"></script>
     <script src="components/transition-detection-engine.js"></script>
+    <script src="components/imbalance-meter.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
