@@ -1,7 +1,7 @@
 {
-  "name": "orderflow-audio",
+  "name": "TradeFlow",
   "version": "1.0.0",
-  "description": "Order Flow Audio Visualization - TickStrike Style",
+  "description": "Order Flow Audio Visualization",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
