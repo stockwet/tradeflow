@@ -92,6 +92,35 @@ class TradeFlowApp {
         };
     }
 
+
+    getDefaultAudioConfig() {
+        return {
+            masterVolume: 0.70,     // 0.0 - 2.0 (UI shows 0-200%)
+            bidFrequency: 100,
+            askFrequency: 1000,
+            meterSensitivity: 1.0,  // 0.0 - 1.0
+            aggregateOrders: false
+        };
+    }
+
+    // Velocity Pulse defaults (matches constructor config)
+    getDefaultVelocityPulseConfig() {
+        return {
+            baselineWindowMs: 45000,
+            sensitivityK: 1.0,
+            minAbsTradesPerSec: 4.0,
+            minAbsVolPerSec: 6.0,
+            switchMarginZ: 0.6,
+            minSwitchMs: 60,
+            minRate: 3,
+            maxRate: 28,
+            rateCurve: 1.7,
+            clickDurationSec: 0.045,
+            fullScaleZPace: 3.0,
+            fullScaleZVol: 3.0
+        };
+    }
+
     loadSettings() {
         try {
             const raw = localStorage.getItem('tradeflow_settings');
@@ -111,6 +140,7 @@ class TradeFlowApp {
     // -----------------------------
     initializeEngines() {
         const saved = this.loadSettings();
+        this._savedSettings = saved || {};
 
         // Load mode first
         if (saved?.audioAlertMode) {
@@ -144,6 +174,35 @@ class TradeFlowApp {
             // Only warn if you actually try to use it
             // console.warn('TransitionDetectionEngine not found. Ensure transition-detection-engine.js is loaded.');
         }
+
+        // Velocity pulse engine config
+        if (this.velocityPulseEngine && this.velocityPulseEngine.updateConfig) {
+            const vDefaults = this.getDefaultVelocityPulseConfig();
+            const vCfg = { ...vDefaults, ...(saved?.velocityPulseConfig || {}) };
+            this.velocityPulseEngine.updateConfig(vCfg);
+        }
+
+    }
+
+
+    // -----------------------------
+    // Settings helpers
+    // -----------------------------
+    _getCurrentPersistableSettings() {
+        const saved = this.loadSettings() || {};
+        return {
+            audioAlertMode: this.audioAlertMode,
+            audioConfig: saved.audioConfig || this.getDefaultAudioConfig(),
+            engineConfig: saved.engineConfig || this.getDefaultEngineConfig(),
+            transitionConfig: saved.transitionConfig || this.getDefaultTransitionConfig(),
+            velocityPulseConfig: saved.velocityPulseConfig || this.getDefaultVelocityPulseConfig()
+        };
+    }
+
+    _saveSettingsPatch(patch = {}) {
+        const current = this._getCurrentPersistableSettings();
+        const merged = { ...current, ...patch };
+        this.saveSettings(merged);
     }
 
     // -----------------------------
@@ -166,6 +225,7 @@ class TradeFlowApp {
                 const volume = parseInt(e.target.value, 10) / 100;
                 this.audioEngine.setVolume(volume);
                 volumeValue.textContent = e.target.value + '%';
+                this._saveSettingsPatch({ audioConfig: { ...(this.loadSettings()?.audioConfig || this.getDefaultAudioConfig()), masterVolume: volume } });
             });
         }
 
@@ -176,6 +236,7 @@ class TradeFlowApp {
                 const freq = parseInt(e.target.value, 10);
                 this.audioEngine.setBidFrequency(freq);
                 bidFreqValue.textContent = freq + ' Hz';
+                this._saveSettingsPatch({ audioConfig: { ...(this.loadSettings()?.audioConfig || this.getDefaultAudioConfig()), bidFrequency: freq } });
             });
         }
 
@@ -186,6 +247,7 @@ class TradeFlowApp {
                 const freq = parseInt(e.target.value, 10);
                 this.audioEngine.setAskFrequency(freq);
                 askFreqValue.textContent = freq + ' Hz';
+                this._saveSettingsPatch({ audioConfig: { ...(this.loadSettings()?.audioConfig || this.getDefaultAudioConfig()), askFrequency: freq } });
             });
         }
 
@@ -196,6 +258,7 @@ class TradeFlowApp {
                 const sensitivity = parseInt(e.target.value, 10) / 100;
                 this.vuMeter.setSensitivity(sensitivity);
                 sensitivityValue.textContent = e.target.value + '%';
+                this._saveSettingsPatch({ audioConfig: { ...(this.loadSettings()?.audioConfig || this.getDefaultAudioConfig()), meterSensitivity: sensitivity } });
             });
         }
 
@@ -253,6 +316,14 @@ class TradeFlowApp {
         // Settings drawer wiring
         this.initializeSettingsDrawer();
 
+        // Apply persisted audio settings immediately
+        const saved = this.loadSettings() || {};
+        const aCfg = { ...this.getDefaultAudioConfig(), ...(saved.audioConfig || {}) };
+        this.audioEngine.setVolume(aCfg.masterVolume);
+        this.audioEngine.setBidFrequency(aCfg.bidFrequency);
+        this.audioEngine.setAskFrequency(aCfg.askFrequency);
+        this.vuMeter.setSensitivity(aCfg.meterSensitivity);
+
         // Populate + show correct section
         this.populateSettingsUIFromCurrent();
         this.updateSettingsVisibility();
@@ -282,7 +353,6 @@ class TradeFlowApp {
         const overlay = document.getElementById('settings-overlay');
         const drawer = document.getElementById('settings-drawer');
 
-        const applyBtn = document.getElementById('apply-settings-btn');
         const resetBtn = document.getElementById('reset-settings-btn');
 
         if (!overlay || !drawer) return;
@@ -305,11 +375,28 @@ class TradeFlowApp {
         if (closeBtn) closeBtn.addEventListener('click', close);
         overlay.addEventListener('click', close);
 
-        if (applyBtn) {
-            applyBtn.addEventListener('click', () => {
-                this.applySettingsFromUI();
-                close();
-            });
+        // Auto-apply: any change in the drawer updates settings immediately.
+        const drawerBody = drawer.querySelector('.drawer-body');
+        if (drawerBody) {
+            const handler = (e) => {
+                const target = e.target;
+                if (!target || !target.id) return;
+
+                // Audio widgets are handled by their own listeners in initializeUI.
+                // Here we handle engine + mode-specific widgets.
+                const isEngineOrModeSetting =
+                    target.id.startsWith('engine-') ||
+                    target.id.startsWith('transition-') ||
+                    target.id.startsWith('velocity-') ||
+                    target.id === 'aggregate-orders';
+
+                if (!isEngineOrModeSetting) return;
+
+                this.applySettingsFromUI(); // reads UI + persists
+            };
+
+            drawerBody.addEventListener('input', handler);
+            drawerBody.addEventListener('change', handler);
         }
 
         if (resetBtn) {
@@ -328,26 +415,69 @@ class TradeFlowApp {
         modeSelect.addEventListener('change', () => {
             this.audioAlertMode = modeSelect.value;
             this.updateSettingsVisibility();
+            this._saveSettingsPatch({ audioAlertMode: this.audioAlertMode });
         });
     }
 
     updateSettingsVisibility() {
         const intelligentSection = document.getElementById('intelligent-settings');
         const transitionSection = document.getElementById('transition-settings');
+        const velocitySection = document.getElementById('velocity-settings');
 
         if (intelligentSection) intelligentSection.style.display = 'none';
         if (transitionSection) transitionSection.style.display = 'none';
+        if (velocitySection) velocitySection.style.display = 'none';
 
         if (this.audioAlertMode === 'intelligent') {
             if (intelligentSection) intelligentSection.style.display = 'block';
         } else if (this.audioAlertMode === 'transition') {
             if (transitionSection) transitionSection.style.display = 'block';
+        } else if (this.audioAlertMode === 'velocity') {
+            if (velocitySection) velocitySection.style.display = 'block';
         }
     }
 
     populateSettingsUIFromCurrent() {
         const modeSelect = document.getElementById('audio-alert-mode');
         if (modeSelect) modeSelect.value = this.audioAlertMode || 'raw';
+
+        // Audio config (persisted)
+        const saved = this.loadSettings() || {};
+        const aCfg = { ...this.getDefaultAudioConfig(), ...(saved.audioConfig || {}) };
+
+        const agg = document.getElementById('aggregate-orders');
+        if (agg) agg.checked = !!aCfg.aggregateOrders;
+
+        const volumeSlider = document.getElementById('master-volume');
+        const volumeValue = document.getElementById('volume-value');
+        if (volumeSlider && volumeValue) {
+            const volPct = Math.round((aCfg.masterVolume ?? 0.7) * 100);
+            volumeSlider.value = String(volPct);
+            volumeValue.textContent = volPct + '%';
+        }
+
+        const bidFreqSlider = document.getElementById('bid-frequency');
+        const bidFreqValue = document.getElementById('bid-freq-value');
+        if (bidFreqSlider && bidFreqValue) {
+            bidFreqSlider.value = String(aCfg.bidFrequency ?? 100);
+            bidFreqValue.textContent = (aCfg.bidFrequency ?? 100) + ' Hz';
+        }
+
+        const askFreqSlider = document.getElementById('ask-frequency');
+        const askFreqValue = document.getElementById('ask-freq-value');
+        if (askFreqSlider && askFreqValue) {
+            askFreqSlider.value = String(aCfg.askFrequency ?? 1000);
+            askFreqValue.textContent = (aCfg.askFrequency ?? 1000) + ' Hz';
+        }
+
+        const sensitivitySlider = document.getElementById('sensitivity');
+        const sensitivityValue = document.getElementById('sensitivity-value');
+        if (sensitivitySlider && sensitivityValue) {
+            const sensPct = Math.round((aCfg.meterSensitivity ?? 1.0) * 100);
+            sensitivitySlider.value = String(sensPct);
+            sensitivityValue.textContent = sensPct + '%';
+        }
+
 
         const setVal = (id, value) => {
             const el = document.getElementById(id);
@@ -382,11 +512,32 @@ class TradeFlowApp {
         setVal('transition-requireSustainedMs', tcfg.requireSustainedMs);
         setVal('transition-lockSideMs', tcfg.lockSideMs);
         setVal('transition-cooldownMs', tcfg.cooldownMs);
+
+
+        // Velocity Pulse settings
+        const vCfg = { ...this.getDefaultVelocityPulseConfig(), ...(saved.velocityPulseConfig || {}) };
+        const setV = (id, value) => {
+            const el = document.getElementById(id);
+            if (el && value !== undefined && value !== null) el.value = value;
+        };
+
+        setV('velocity-baselineWindowMs', vCfg.baselineWindowMs);
+        setV('velocity-sensitivityK', vCfg.sensitivityK);
+        setV('velocity-minAbsTradesPerSec', vCfg.minAbsTradesPerSec);
+        setV('velocity-minAbsVolPerSec', vCfg.minAbsVolPerSec);
+        setV('velocity-switchMarginZ', vCfg.switchMarginZ);
+        setV('velocity-minSwitchMs', vCfg.minSwitchMs);
+        setV('velocity-minRate', vCfg.minRate);
+        setV('velocity-maxRate', vCfg.maxRate);
+        setV('velocity-rateCurve', vCfg.rateCurve);
+        setV('velocity-fullScaleZPace', vCfg.fullScaleZPace);
+        setV('velocity-fullScaleZVol', vCfg.fullScaleZVol);
+
     }
 
     applySettingsFromUI() {
         const modeSelect = document.getElementById('audio-alert-mode');
-        this.audioAlertMode = modeSelect ? modeSelect.value : 'raw';
+        this.audioAlertMode = modeSelect ? modeSelect.value : (this.audioAlertMode || 'raw');
 
         const readNum = (id) => {
             const el = document.getElementById(id);
@@ -399,6 +550,15 @@ class TradeFlowApp {
             const el = document.getElementById(id);
             return el ? String(el.value) : null;
         };
+
+        // Persisted audio config (aggregate only here; sliders already persist in their listeners)
+        const saved = this.loadSettings() || {};
+        const aCfg = { ...this.getDefaultAudioConfig(), ...(saved.audioConfig || {}) };
+        const agg = document.getElementById('aggregate-orders');
+        if (agg) {
+            aCfg.aggregateOrders = !!agg.checked;
+            // (If/when AudioEngine supports it, apply here too)
+        }
 
         // Intelligent config
         const engineConfig = {
@@ -441,28 +601,48 @@ class TradeFlowApp {
             this.transitionEngine.reset?.();
         }
 
-        this.saveSettings({
+        // Velocity Pulse config
+        const velocityPulseConfig = {
+            baselineWindowMs: readNum('velocity-baselineWindowMs'),
+            sensitivityK: readNum('velocity-sensitivityK'),
+            minAbsTradesPerSec: readNum('velocity-minAbsTradesPerSec'),
+            minAbsVolPerSec: readNum('velocity-minAbsVolPerSec'),
+            switchMarginZ: readNum('velocity-switchMarginZ'),
+            minSwitchMs: readNum('velocity-minSwitchMs'),
+            minRate: readNum('velocity-minRate'),
+            maxRate: readNum('velocity-maxRate'),
+            rateCurve: readNum('velocity-rateCurve'),
+            fullScaleZPace: readNum('velocity-fullScaleZPace'),
+            fullScaleZVol: readNum('velocity-fullScaleZVol')
+        };
+        Object.keys(velocityPulseConfig).forEach(k => {
+            if (velocityPulseConfig[k] === null || velocityPulseConfig[k] === '') delete velocityPulseConfig[k];
+        });
+
+        if (this.velocityPulseEngine && this.velocityPulseEngine.updateConfig) {
+            this.velocityPulseEngine.updateConfig(velocityPulseConfig);
+        }
+
+        this._saveSettingsPatch({
             audioAlertMode: this.audioAlertMode,
+            audioConfig: aCfg,
             engineConfig: (this.eventEngine && this.eventEngine.getState)
                 ? this.eventEngine.getState().config
                 : engineConfig,
             transitionConfig: (this.transitionEngine && this.transitionEngine.getState)
                 ? this.transitionEngine.getState().config
-                : transitionConfig
+                : transitionConfig,
+            velocityPulseConfig: { ...this.getDefaultVelocityPulseConfig(), ...(saved.velocityPulseConfig || {}), ...velocityPulseConfig }
         });
 
         this.updateSettingsVisibility();
-
-        console.log('Settings applied:', {
-            audioAlertMode: this.audioAlertMode,
-            engineConfig,
-            transitionConfig
-        });
     }
 
     resetSettingsToDefaults() {
         const defaults = this.getDefaultEngineConfig();
         const tDefaults = this.getDefaultTransitionConfig();
+        const vDefaults = this.getDefaultVelocityPulseConfig();
+        const aDefaults = this.getDefaultAudioConfig();
 
         this.audioAlertMode = 'raw';
 
@@ -476,10 +656,23 @@ class TradeFlowApp {
             this.transitionEngine.reset?.();
         }
 
+        if (this.velocityPulseEngine && this.velocityPulseEngine.updateConfig) {
+            this.velocityPulseEngine.updateConfig(vDefaults);
+            this.velocityPulseEngine.reset?.();
+        }
+
+        // Apply audio defaults immediately
+        this.audioEngine.setVolume(aDefaults.masterVolume);
+        this.audioEngine.setBidFrequency(aDefaults.bidFrequency);
+        this.audioEngine.setAskFrequency(aDefaults.askFrequency);
+        this.vuMeter.setSensitivity(aDefaults.meterSensitivity);
+
         this.saveSettings({
             audioAlertMode: this.audioAlertMode,
+            audioConfig: aDefaults,
             engineConfig: defaults,
-            transitionConfig: tDefaults
+            transitionConfig: tDefaults,
+            velocityPulseConfig: vDefaults
         });
     }
 

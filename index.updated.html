@@ -475,10 +475,70 @@
             />
           </div>
         </div>
+
+        <!-- Velocity Pulse Settings -->
+        <div id="velocity-settings" class="drawer-section settings-section">
+          <h4>Velocity Pulse Settings</h4>
+
+          <div class="drawer-row">
+            <label for="velocity-baselineWindowMs">Baseline Window (ms)</label>
+            <input id="velocity-baselineWindowMs" type="number" min="5000" max="240000" step="1000" value="45000" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-sensitivityK">Sensitivity K</label>
+            <input id="velocity-sensitivityK" type="number" min="0.1" max="5" step="0.1" value="1.0" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-minAbsTradesPerSec">Min Trades/sec</label>
+            <input id="velocity-minAbsTradesPerSec" type="number" min="0" max="500" step="0.5" value="4.0" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-minAbsVolPerSec">Min Vol/sec</label>
+            <input id="velocity-minAbsVolPerSec" type="number" min="0" max="10000" step="0.5" value="6.0" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-switchMarginZ">Switch Margin (Z)</label>
+            <input id="velocity-switchMarginZ" type="number" min="0" max="5" step="0.1" value="0.6" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-minSwitchMs">Min Switch (ms)</label>
+            <input id="velocity-minSwitchMs" type="number" min="0" max="2000" step="10" value="60" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-minRate">Min Click Rate (Hz)</label>
+            <input id="velocity-minRate" type="number" min="0" max="60" step="1" value="3" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-maxRate">Max Click Rate (Hz)</label>
+            <input id="velocity-maxRate" type="number" min="1" max="120" step="1" value="28" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-rateCurve">Rate Curve</label>
+            <input id="velocity-rateCurve" type="number" min="0.5" max="5" step="0.1" value="1.7" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="velocity-fullScaleZPace">Full Scale Z (Pace)</label>
+            <input id="velocity-fullScaleZPace" type="number" min="0.5" max="10" step="0.1" value="3.0" />
+          </div>
+
+          <div class="drawer-row" style="margin-bottom: 0">
+            <label for="velocity-fullScaleZVol">Full Scale Z (Vol)</label>
+            <input id="velocity-fullScaleZVol" type="number" min="0.5" max="10" step="0.1" value="3.0" />
+          </div>
+        </div>
+
       </div>
 
       <div class="drawer-footer">
-        <button id="apply-settings-btn">Apply</button>
         <button id="reset-settings-btn" class="reset">Reset to Defaults</button>
       </div>
     </aside>
