@@ -29,7 +29,7 @@ h1 {
   font-size: 2.5em;
   font-weight: 300;
   letter-spacing: 2px;
-  color: #00ff88;
+  color: #00D9FF;
   text-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
 }
 
@@ -83,9 +83,9 @@ h1 {
 }
 
 .status.connected {
-  background: rgba(68, 255, 68, 0.2);
-  color: #44ff44;
-  border: 1px solid #44ff44;
+  background: #00d9ff4f;;;
+  color: #00D9FF;
+  border: 1px solid #00D9FF;
 }
 
 .status.disconnected {
@@ -133,7 +133,7 @@ h1 {
   margin-bottom: 15px;
   text-transform: uppercase;
   letter-spacing: 2px;
-  color: #00ff88;
+  color: #00D9FF;
 }
 
 canvas {
@@ -158,7 +158,7 @@ canvas {
 /* Buttons */
 button {
   padding: 12px 24px;
-  background: #00ff88;
+  background: #00D9FF;
   color: #000;
   border: none;
   border-radius: 8px;
@@ -169,7 +169,7 @@ button {
 }
 
 button:hover {
-  background: #00cc6a;
+  background: #00D9FF;
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 255, 136, 0.3);
 }
@@ -228,7 +228,7 @@ input[type="file"] {
 
 .stats-header h3 {
   margin: 0;
-  color: #00ff88;
+  color: #00D9FF;
 }
 
 .stats-grid {
@@ -256,7 +256,7 @@ input[type="file"] {
 .stat-value {
   font-size: 1.4em;
   font-weight: 600;
-  color: #00ff88;
+  color: #00D9FF;
 }
 
 .stat-value.sell {
@@ -264,7 +264,7 @@ input[type="file"] {
 }
 
 .stat-value.buy {
-  color: #44ff44;
+  color: #00D9FF;
 }
 
 /* Stats Table */
@@ -333,7 +333,7 @@ input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 20px;
   height: 20px;
-  background: #00ff88;
+  background: #00D9FF;
   border-radius: 50%;
   cursor: pointer;
   box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
@@ -342,7 +342,7 @@ input[type="range"]::-webkit-slider-thumb {
 input[type="range"]::-moz-range-thumb {
   width: 20px;
   height: 20px;
-  background: #00ff88;
+  background: #00D9FF;
   border-radius: 50%;
   cursor: pointer;
   border: none;
@@ -352,7 +352,7 @@ input[type="range"]::-moz-range-thumb {
   display: inline-block;
   min-width: 60px;
   text-align: right;
-  color: #00ff88;
+  color: #00D9FF;
   font-weight: 600;
 }
 
@@ -395,7 +395,7 @@ input[type="range"]::-moz-range-thumb {
 
 .drawer-header h3 {
   margin: 0;
-  color: #00ff88;
+  color: #00D9FF;
   font-size: 1.5em;
 }
 
@@ -429,7 +429,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .drawer-section h4 {
-  color: #00ff88;
+  color: #00D9FF;
   margin-bottom: 15px;
   font-size: 1.1em;
 }
@@ -465,7 +465,7 @@ input[type="range"]::-moz-range-thumb {
   width: 20px;
   height: 20px;
   cursor: pointer;
-  accent-color: #00ff88;
+  accent-color: #00D9FF;
 }
 
 .drawer-footer {

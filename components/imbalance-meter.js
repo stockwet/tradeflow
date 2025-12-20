@@ -106,7 +106,7 @@ class ImbalanceMeter {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const shown = Math.max(-this.maxAbs, Math.min(this.maxAbs, this.value));
-    ctx.fillText(`${shown.toFixed(1)} Δ vol/sec`, midX, h / 2);
+    ctx.fillText(`${shown.toFixed(1)} Δ v/s`, midX, h / 2);
 
   }
 }
