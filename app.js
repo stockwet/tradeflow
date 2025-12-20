@@ -32,6 +32,8 @@ class TradeFlowApp {
         this.websocket = null;
         this.connectionStatus = 'disconnected';
         this.dataMode = 'websocket';  // 'websocket' or 'playback'
+        this.userDisconnected = false;
+
 
         // Audio alert mode: 'raw' | 'intelligent' | 'transition'
         this.audioAlertMode = 'intelligent';
@@ -308,8 +310,23 @@ class TradeFlowApp {
         }
 
         // WebSocket reconnect button
+        // Connect / Disconnect button (single control)
         const reconnectBtn = document.getElementById('reconnect-btn');
-        if (reconnectBtn) reconnectBtn.addEventListener('click', () => this.connectWebSocket());
+        if (reconnectBtn) {
+            reconnectBtn.addEventListener('click', () => {
+                if (this.connectionStatus === 'connected') {
+                    // Manual disconnect: prevent auto-reconnect
+                    this.userDisconnected = true;
+                    this.websocket?.close();
+                } else if (this.connectionStatus === 'disconnected') {
+                    // Manual connect: allow auto-reconnect again
+                    this.userDisconnected = false;
+                    this.connectWebSocket();
+                }
+            });
+        }
+
+
 
         this.updateUIForMode();
 
@@ -681,14 +698,22 @@ class TradeFlowApp {
     // -----------------------------
     connectWebSocket() {
         const WS_URL = 'ws://10.211.55.5:8080';
-        const statusEl = document.getElementById('connection-status');
-        const reconnectBtn = document.getElementById('reconnect-btn');
-
-        if (statusEl) {
-            statusEl.textContent = 'Connecting...';
-            statusEl.className = 'status connecting';
+        // If user intentionally disconnected, don't reconnect automatically
+        if (this.userDisconnected) {
+            this.updateConnectButton('disconnected');
+            return;
         }
-        if (reconnectBtn) reconnectBtn.disabled = true;
+
+
+        // Prevent duplicate connections
+        if (this.websocket && 
+            (this.websocket.readyState === WebSocket.OPEN || 
+            this.websocket.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+
+        this.connectionStatus = 'connecting';
+        this.updateConnectButton('connecting');
 
         try {
             this.websocket = new WebSocket(WS_URL);
@@ -698,11 +723,7 @@ class TradeFlowApp {
                 this.audioEngine.init();
 
                 this.connectionStatus = 'connected';
-                if (statusEl) {
-                    statusEl.textContent = 'Connected';
-                    statusEl.className = 'status connected';
-                }
-                if (reconnectBtn) reconnectBtn.disabled = true;
+                this.updateConnectButton('connected');
 
                 this.resetStats();
             };
@@ -710,7 +731,9 @@ class TradeFlowApp {
             this.websocket.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-                    if (message.type === 'trade') this.handleTrade(message.data);
+                    if (message.type === 'trade') {
+                        this.handleTrade(message.data);
+                    }
                 } catch (err) {
                     console.error('Failed to parse WebSocket message:', err);
                 }
@@ -718,33 +741,64 @@ class TradeFlowApp {
 
             this.websocket.onerror = (error) => {
                 console.error('WebSocket error:', error);
+                // Let onclose handle UI + reconnect
             };
 
             this.websocket.onclose = () => {
                 console.log('Disconnected from socket reader');
 
+                this.websocket = null;
                 this.connectionStatus = 'disconnected';
-                if (statusEl) {
-                    statusEl.textContent = 'Disconnected';
-                    statusEl.className = 'status disconnected';
-                }
-                if (reconnectBtn) reconnectBtn.disabled = false;
+                this.updateConnectButton('disconnected');
 
-                setTimeout(() => {
-                    if (this.connectionStatus === 'disconnected' && this.dataMode === 'websocket') {
-                        console.log('Attempting to reconnect...');
-                        this.connectWebSocket();
-                    }
-                }, 5000);
+                // Auto-reconnect only if still in websocket mode
+                if (this.dataMode === 'websocket') {
+                    setTimeout(() => {
+                        if (
+                            this.connectionStatus === 'disconnected' &&
+                            this.dataMode === 'websocket' &&
+                            !this.userDisconnected
+                        ) {
+                            console.log('Attempting to reconnect...');
+                            this.connectWebSocket();
+                        }
+                    }, 5000);
+
+                }
             };
 
         } catch (err) {
             console.error('Failed to create WebSocket:', err);
-            if (statusEl) {
-                statusEl.textContent = 'Error';
-                statusEl.className = 'status disconnected';
-            }
-            if (reconnectBtn) reconnectBtn.disabled = false;
+            this.websocket = null;
+            this.connectionStatus = 'disconnected';
+            this.updateConnectButton('disconnected');
+        }
+    }
+
+
+    updateConnectButton(state) {
+        const btn = document.getElementById('reconnect-btn');
+        if (!btn) return;
+
+        const dot = btn.querySelector('.conn-dot');
+        const label = btn.querySelector('.conn-label');
+
+        dot.classList.remove('connected', 'connecting', 'disconnected');
+
+        if (state === 'connected') {
+            dot.classList.add('connected');
+            label.textContent = 'Disconnect';
+            btn.disabled = false;
+        } 
+        else if (state === 'connecting') {
+            dot.classList.add('connecting');
+            label.textContent = 'Connecting...';
+            btn.disabled = true;
+        } 
+        else {
+            dot.classList.add('disconnected');
+            label.textContent = 'Connect';
+            btn.disabled = false;
         }
     }
 

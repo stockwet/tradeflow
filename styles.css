@@ -76,12 +76,30 @@ h1 {
 
 /* Status */
 .status {
-  display: inline-block;
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-weight: 500;
-  font-size: 0.9em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.06);
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+  cursor: default;          /* key: not pointer */
 }
+/* Add a dot indicator */
+.status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  background: rgba(255,255,255,0.35); /* default */
+}
+.status.connected::before { background: #00ff88; }
+.status.connecting::before { background: #ffd54a; }
+.status.disconnected::before { background: #ff4444; }
 
 .status.connected {
   background: #00d9ff4f;;;
@@ -100,6 +118,42 @@ h1 {
   color: #ffc844;
   border: 1px solid #ffc844;
 }
+
+.connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.connect-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.12);
+}
+
+.connect-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Connection dot */
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4444; /* default red */
+}
+
+/* States */
+.conn-dot.connected { background: #00ff88; }
+.conn-dot.connecting { background: #ffd54a; }
+.conn-dot.disconnected { background: #ff4444; }
 
 /* Main Layout */
 .main-layout {
