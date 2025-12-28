@@ -1019,10 +1019,22 @@ class TradeFlowApp {
         setText('imbalance-vol-per-sec', r.imbalanceVolPerSec.toFixed(1));
 
         // Volume per trade (from cumulative stats)
-        const sellVolPerTrade = this.stats.sellCount > 0 ? this.stats.sellVolume / this.stats.sellCount : 0;
-        const buyVolPerTrade = this.stats.buyCount > 0 ? this.stats.buyVolume / this.stats.buyCount : 0;
-        setText('sell-vol-per-trade', sellVolPerTrade.toFixed(1));
-        setText('buy-vol-per-trade', buyVolPerTrade.toFixed(1));
+        const sellVolPerTrade = this.stats.sellCount > 0
+        ? this.stats.sellVolume / this.stats.sellCount
+        : 0;
+
+        const buyVolPerTrade = this.stats.buyCount > 0
+        ? this.stats.buyVolume / this.stats.buyCount
+        : 0;
+
+        // % greater than 1 contract per trade
+        const sellPctGreater = (sellVolPerTrade - 1) * 100;
+        const buyPctGreater  = (buyVolPerTrade  - 1) * 100;
+
+        // Display (no threshold, no logic)
+        setText('sell-vol-per-trade', `${sellPctGreater.toFixed(0)}%`);
+        setText('buy-vol-per-trade',  `${buyPctGreater.toFixed(0)}%`);
+
 
         const totalEventsPerSec = (r.sellTradesPerSec + r.buyTradesPerSec);
         setText('events-per-sec', totalEventsPerSec.toFixed(1));
