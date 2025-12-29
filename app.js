@@ -802,6 +802,17 @@ class TradeFlowApp {
         }
     }
 
+
+    // -----------------------------
+    // Audio + Visual alignment helper
+    // -----------------------------
+    _emitAudioAndVisual(side, pseudoVolume, durationSec = undefined) {
+        // Keep the VU meter in the same units the audio engine is using for the current mode.
+        // (RAW mode passes actual trade volume; other modes pass pseudo-volume.)
+        this.audioEngine.playTrade(side, pseudoVolume, durationSec);
+        this.vuMeter.updateVolume(side, pseudoVolume);
+    }
+
     // -----------------------------
     // Trade processing
     // -----------------------------
@@ -812,42 +823,50 @@ class TradeFlowApp {
         if (side !== 'BID' && side !== 'ASK') return;
         if (!Number.isFinite(volume)) return;
 
-        this.vuMeter.updateVolume(side, volume);
-
-        // totals + rolling buffer
+        // totals + rolling buffer (always track raw tape stats)
         this.updateStats(side, volume);
 
-        // RAW mode
+        // RAW mode: audio is per trade using real volume, so meter should match tape
         if (this.audioAlertMode === 'raw') {
-            this.audioEngine.playTrade(side, volume);
+            this._emitAudioAndVisual(side, volume);
             return;
         }
-        // VELOCITY PULSE mode: audio is scheduled by velocity engine, not per trade
+
+        // VELOCITY PULSE mode: audio is scheduled by velocity engine (not per trade).
+        // The VU meter is updated from the same derived loudness in updateStatsDisplay().
         if (this.audioAlertMode === 'velocity') {
             return;
         }
 
-
-        // TRANSITION mode
+        // TRANSITION mode: drive audio + meter from transition events (not raw tape)
         if (this.audioAlertMode === 'transition') {
             if (!this.transitionEngine) {
                 // fallback
-                this.audioEngine.playTrade(side, volume);
+                this._emitAudioAndVisual(side, volume);
                 return;
             }
 
             const evt = this.transitionEngine.ingest(trade);
             if (!evt) return;
 
-            // evt should contain { side, strength } or similar; if not, adapt here.
-            const pseudoVolume = Math.max(1, Math.round((evt.strength ?? 1) * 10));
-            this.audioEngine.playTrade(evt.side ?? side, pseudoVolume);
+            // TransitionDetectionEngine provides imbalance (-1..+1) and/or other metrics.
+            // Prefer imbalance magnitude for loudness; fall back to evt.strength if present.
+            const imbalance = Number.isFinite(evt.imbalance) ? evt.imbalance : null;
+            const derivedSide = imbalance !== null ? (imbalance >= 0 ? 'ASK' : 'BID') : (evt.side ?? side);
+
+            const strength01 =
+                imbalance !== null
+                    ? Math.min(1, Math.abs(imbalance))
+                    : (Number.isFinite(evt.strength) ? Math.min(1, Math.abs(evt.strength)) : 1);
+
+            const pseudoVolume = Math.max(1, Math.round(strength01 * 10));
+            this._emitAudioAndVisual(derivedSide, pseudoVolume);
             return;
         }
 
-        // INTELLIGENT mode
+        // INTELLIGENT mode: drive audio + meter from EventEngine events (not raw tape)
         if (!this.eventEngine) {
-            this.audioEngine.playTrade(side, volume);
+            this._emitAudioAndVisual(side, volume);
             return;
         }
 
@@ -855,7 +874,7 @@ class TradeFlowApp {
         if (!event) return;
 
         const pseudoVolume = Math.max(1, Math.round(event.strength * 10));
-        this.audioEngine.playTrade(event.side, pseudoVolume);
+        this._emitAudioAndVisual(event.side, pseudoVolume);
     }
 
     handleTrade(trade) {
@@ -1003,6 +1022,27 @@ class TradeFlowApp {
                 ts: performance.now()
             });
         }
+
+        // Keep the visual VU meter aligned with VelocityPulseEngine audio output.
+        // (Audio pulses are scheduled inside the engine; we mirror its current loudness + active side here.)
+        if (this.audioAlertMode === 'velocity' && this.velocityPulseEngine && this.velocityPulseEngine.activeSide) {
+            const eng = this.velocityPulseEngine;
+            const side = eng.activeSide;
+
+            // Recreate the engine's pseudo-volume calculation (vol/sec above adaptive baseline)
+            const vps = eng.latest?.[side]?.vps ?? 0;
+            if (typeof eng._volScoreZ === 'function' &&
+                typeof eng._intensityFromZ === 'function' &&
+                typeof eng._pseudoVolumeFromIntensity === 'function') {
+
+                const volZ = eng._volScoreZ(side, vps);
+                const volI = eng._intensityFromZ(volZ, eng.config?.fullScaleZVol ?? 6);
+                const pseudoVol = eng._pseudoVolumeFromIntensity(volI);
+
+                this.vuMeter.updateVolume(side, pseudoVol);
+            }
+        }
+
 
 
 
