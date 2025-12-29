@@ -192,6 +192,22 @@
       </div>
 
       <div class="drawer-body">
+        <!-- Connection Settings (always visible) -->
+        <div class="drawer-section">
+          <h4>Connection Settings</h4>
+
+          <div class="drawer-row">
+            <label for="ws-host">WebSocket Host</label>
+            <input id="ws-host" type="text" value="10.211.55.5" />
+          </div>
+
+          <div class="drawer-row">
+            <label for="ws-port">WebSocket Port</label>
+            <input id="ws-port" type="number" min="1" max="65535" step="1" value="8080" />
+          </div>
+
+        </div>
+
         <!-- Audio Settings (always visible) -->
         <div class="drawer-section">
           <h4>Audio Settings</h4>

@@ -65,6 +65,16 @@ class TradeFlowApp {
     // -----------------------------
     // Defaults + persistence
     // -----------------------------
+
+    // WebSocket connection defaults
+    // NOTE: index.html should provide inputs with ids: ws-host, ws-port
+    getDefaultConnectionConfig() {
+        return {
+            host: '10.211.55.5',
+            port: 8080
+        };
+    }
+
     getDefaultEngineConfig() {
         return {
             windowMs: 300,
@@ -197,7 +207,8 @@ class TradeFlowApp {
             audioConfig: saved.audioConfig || this.getDefaultAudioConfig(),
             engineConfig: saved.engineConfig || this.getDefaultEngineConfig(),
             transitionConfig: saved.transitionConfig || this.getDefaultTransitionConfig(),
-            velocityPulseConfig: saved.velocityPulseConfig || this.getDefaultVelocityPulseConfig()
+            velocityPulseConfig: saved.velocityPulseConfig || this.getDefaultVelocityPulseConfig(),
+            connectionConfig: saved.connectionConfig || this.getDefaultConnectionConfig()
         };
     }
 
@@ -405,7 +416,9 @@ class TradeFlowApp {
                     target.id.startsWith('engine-') ||
                     target.id.startsWith('transition-') ||
                     target.id.startsWith('velocity-') ||
-                    target.id === 'aggregate-orders';
+                    target.id === 'aggregate-orders' ||
+                    target.id === 'ws-host' ||
+                    target.id === 'ws-port';
 
                 if (!isEngineOrModeSetting) return;
 
@@ -461,6 +474,15 @@ class TradeFlowApp {
         // Audio config (persisted)
         const saved = this.loadSettings() || {};
         const aCfg = { ...this.getDefaultAudioConfig(), ...(saved.audioConfig || {}) };
+
+        // Connection config (persisted)
+        const cCfg = { ...this.getDefaultConnectionConfig(), ...(saved.connectionConfig || {}) };
+
+        const wsHost = document.getElementById('ws-host');
+        const wsPort = document.getElementById('ws-port');
+
+        if (wsHost) wsHost.value = String(cCfg.host ?? '10.211.55.5');
+        if (wsPort) wsPort.value = String(cCfg.port ?? 8080);
 
         const agg = document.getElementById('aggregate-orders');
         if (agg) agg.checked = !!aCfg.aggregateOrders;
@@ -571,6 +593,16 @@ class TradeFlowApp {
         // Persisted audio config (aggregate only here; sliders already persist in their listeners)
         const saved = this.loadSettings() || {};
         const aCfg = { ...this.getDefaultAudioConfig(), ...(saved.audioConfig || {}) };
+
+        // Connection config (host/port)
+        const prevConn = { ...this.getDefaultConnectionConfig(), ...(saved.connectionConfig || {}) };
+        const connectionConfig = {
+            host: (readStr('ws-host') || '').trim(),
+            port: readNum('ws-port')
+        };
+
+        if (!connectionConfig.host) connectionConfig.host = prevConn.host;
+        if (!connectionConfig.port) connectionConfig.port = prevConn.port;
         const agg = document.getElementById('aggregate-orders');
         if (agg) {
             aCfg.aggregateOrders = !!agg.checked;
@@ -649,8 +681,26 @@ class TradeFlowApp {
             transitionConfig: (this.transitionEngine && this.transitionEngine.getState)
                 ? this.transitionEngine.getState().config
                 : transitionConfig,
-            velocityPulseConfig: { ...this.getDefaultVelocityPulseConfig(), ...(saved.velocityPulseConfig || {}), ...velocityPulseConfig }
+            velocityPulseConfig: { ...this.getDefaultVelocityPulseConfig(), ...(saved.velocityPulseConfig || {}), ...velocityPulseConfig },
+            connectionConfig
         });
+
+        // If the endpoint changed and we are in live mode, force a reconnect.
+        // (Respects manual disconnect via this.userDisconnected)
+        if (
+            this.dataMode === 'websocket' &&
+            !this.userDisconnected &&
+            (
+                String(prevConn.host) !== String(connectionConfig.host) ||
+                Number(prevConn.port) !== Number(connectionConfig.port)
+            )
+        ) {
+            if (this.websocket && (this.connectionStatus === 'connected' || this.connectionStatus === 'connecting')) {
+                try { this.websocket.close(); } catch { /* ignore */ }
+            } else if (this.connectionStatus === 'disconnected') {
+                this.connectWebSocket();
+            }
+        }
 
         this.updateSettingsVisibility();
     }
@@ -660,6 +710,7 @@ class TradeFlowApp {
         const tDefaults = this.getDefaultTransitionConfig();
         const vDefaults = this.getDefaultVelocityPulseConfig();
         const aDefaults = this.getDefaultAudioConfig();
+        const cDefaults = this.getDefaultConnectionConfig();
 
         this.audioAlertMode = 'raw';
 
@@ -689,15 +740,27 @@ class TradeFlowApp {
             audioConfig: aDefaults,
             engineConfig: defaults,
             transitionConfig: tDefaults,
-            velocityPulseConfig: vDefaults
+            velocityPulseConfig: vDefaults,
+            connectionConfig: cDefaults
         });
     }
 
     // -----------------------------
     // WebSocket
     // -----------------------------
+
+    _buildWebSocketUrl() {
+        const saved = this.loadSettings() || {};
+        const cCfg = { ...this.getDefaultConnectionConfig(), ...(saved.connectionConfig || {}) };
+
+        const host = String(cCfg.host || '').trim();
+        const port = Number(cCfg.port) || this.getDefaultConnectionConfig().port;
+
+        return `ws://${host}:${port}`;
+    }
+
     connectWebSocket() {
-        const WS_URL = 'ws://10.211.55.5:8080';
+        const WS_URL = this._buildWebSocketUrl();
         // If user intentionally disconnected, don't reconnect automatically
         if (this.userDisconnected) {
             this.updateConnectButton('disconnected');
