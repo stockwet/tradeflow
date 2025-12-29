@@ -1,24 +1,49 @@
 {
   "name": "TradeFlow",
   "version": "1.0.0",
-  "description": "Order Flow Audio Visualization",
+  "description": "Order Flow Audio and Visualization",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --enable-logging"
+    "dev": "electron . --enable-logging",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
-  "keywords": [
-    "trading",
-    "orderflow",
-    "audio",
-    "visualization"
-  ],
+  "keywords": ["trading", "orderflow", "audio", "visualization"],
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
     "ws": "^8.18.3"
+  },
+  "build": {
+    "appId": "com.tradeflow.audio",
+    "productName": "TradeFlow Audio Monitor",
+    "directories": {
+      "output": "dist"
+    },
+    "asar": true,
+    "files": [
+      "./*",
+      "components/**",
+
+      "!server/**",
+      "!acsil/**",
+      "!dtc/**",
+
+      "!**/*.cpp",
+      "!**/*.bat",
+      "!README.md",
+      "!Readme.md"
+    ],
+    "extraResources": [
+      "sample-data.csv",
+      "tradeflow-icon.png"
+    ],
+    "mac": { "target": ["dmg", "zip"] },
+    "win": { "target": ["nsis"] }
   }
 }
